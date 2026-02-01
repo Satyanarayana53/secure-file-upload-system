@@ -2,7 +2,7 @@ const express = require("express");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const nodemailer = require("nodemailer");
-const db = require("../config/db");
+const db = require("../config/db"); // pg Pool
 
 const router = express.Router();
 
@@ -14,11 +14,12 @@ const transporter = nodemailer.createTransport({
   }
 });
 
-const OTP_EXPIRY_TIME = 5 * 60 * 1000;      
-const OTP_RESEND_LIMIT = 3;                 
+const OTP_EXPIRY_TIME = 5 * 60 * 1000;
+const OTP_RESEND_LIMIT = 3;
 const OTP_RESEND_COOLDOWN = 60 * 1000;
-const OTP_LOCK_TIME = 10 * 60 * 1000; 
+const OTP_LOCK_TIME = 10 * 60 * 1000;
 
+/* ================= REGISTER ================= */
 router.post("/register", async (req, res) => {
   try {
     const { username, email, password } = req.body;
@@ -27,10 +28,10 @@ router.post("/register", async (req, res) => {
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const now = Date.now();
 
-    db.query(
+    await db.query(
       `INSERT INTO users 
-       (username,email,password,otp,otp_expiry,otp_resend_count,otp_last_sent) 
-       VALUES (?,?,?,?,?,?,?)`,
+      (username, email, password, otp, otp_expiry, otp_resend_count, otp_last_sent)
+      VALUES ($1,$2,$3,$4,$5,$6,$7)`,
       [
         username,
         email,
@@ -39,151 +40,147 @@ router.post("/register", async (req, res) => {
         now + OTP_EXPIRY_TIME,
         0,
         now
-      ],
-      async (err) => {
-        if (err) {
-          return res.status(400).json({ message: "Email already exists" });
-        }
-
-        await transporter.sendMail({
-          to: email,
-          subject: "SecureUpload OTP Verification",
-          text: `Your OTP is ${otp}. It is valid for 5 minutes.`
-        });
-
-        res.json({ message: "OTP sent to email" });
-      }
+      ]
     );
-  } catch {
+
+    await transporter.sendMail({
+      to: email,
+      subject: "SecureUpload OTP Verification",
+      text: `Your OTP is ${otp}. It is valid for 5 minutes.`
+    });
+
+    res.json({ message: "OTP sent to email" });
+  } catch (err) {
+    if (err.code === "23505") {
+      return res.status(400).json({ message: "Email already exists" });
+    }
+    console.error(err);
     res.status(500).json({ message: "Server error" });
   }
 });
 
-router.post("/verify", (req, res) => {
+/* ================= VERIFY OTP ================= */
+router.post("/verify", async (req, res) => {
   const { email, otp } = req.body;
   const now = Date.now();
 
-  db.query(
-    "SELECT * FROM users WHERE email=?",
-    [email],
-    (err, result) => {
-      if (!result.length)
-        return res.status(400).json({ message: "Invalid request" });
-
-      const user = result[0];
-
-      if (user.is_verified)
-        return res.status(400).json({ message: "Already verified" });
-
-      if (now > user.otp_expiry)
-        return res.status(400).json({ message: "OTP expired" });
-
-      if (user.otp !== otp)
-        return res.status(400).json({ message: "Invalid OTP" });
-
-      db.query(
-        `UPDATE users 
-         SET is_verified=1, otp=NULL, otp_expiry=NULL,
-             otp_resend_count=0, otp_locked_until=NULL
-         WHERE email=?`,
-        [email]
-      );
-
-      res.json({ message: "Email verified successfully" });
-    }
+  const result = await db.query(
+    "SELECT * FROM users WHERE email=$1",
+    [email]
   );
+
+  if (result.rows.length === 0)
+    return res.status(400).json({ message: "Invalid request" });
+
+  const user = result.rows[0];
+
+  if (user.is_verified)
+    return res.status(400).json({ message: "Already verified" });
+
+  if (now > user.otp_expiry)
+    return res.status(400).json({ message: "OTP expired" });
+
+  if (user.otp !== otp)
+    return res.status(400).json({ message: "Invalid OTP" });
+
+  await db.query(
+    `UPDATE users SET 
+      is_verified=true,
+      otp=NULL,
+      otp_expiry=NULL,
+      otp_resend_count=0,
+      otp_locked_until=NULL
+     WHERE email=$1`,
+    [email]
+  );
+
+  res.json({ message: "Email verified successfully" });
 });
 
-router.post("/resend-otp", (req, res) => {
+/* ================= RESEND OTP ================= */
+router.post("/resend-otp", async (req, res) => {
   const { email } = req.body;
   const now = Date.now();
 
-  db.query(
-    "SELECT * FROM users WHERE email=?",
-    [email],
-    async (err, result) => {
-      if (!result.length)
-        return res.status(400).json({ message: "User not found" });
-
-      const user = result[0];
-
-      if (user.is_verified)
-        return res.status(400).json({ message: "Email already verified" });
-
-      if (user.otp_locked_until && now < user.otp_locked_until) {
-        const wait = Math.ceil((user.otp_locked_until - now) / 1000);
-        return res.status(429).json({
-          message: `Too many requests. Try again in ${wait}s`
-        });
-      }
-
-      if (now - user.otp_last_sent < OTP_RESEND_COOLDOWN) {
-        const wait = Math.ceil(
-          (OTP_RESEND_COOLDOWN - (now - user.otp_last_sent)) / 1000
-        );
-        return res.status(429).json({
-          message: `Please wait ${wait}s before resending OTP`
-        });
-      }
-
-      if (user.otp_resend_count >= OTP_RESEND_LIMIT) {
-        const lockUntil = now + OTP_LOCK_TIME;
-
-        db.query(
-          "UPDATE users SET otp_locked_until=? WHERE email=?",
-          [lockUntil, email]
-        );
-
-        return res.status(429).json({
-          message: "OTP resend limit exceeded. Try again later."
-        });
-      }
-
-      const newOtp = Math.floor(100000 + Math.random() * 900000).toString();
-
-      db.query(
-        `UPDATE users 
-         SET otp=?, 
-             otp_expiry=?, 
-             otp_resend_count=otp_resend_count+1,
-             otp_last_sent=? 
-         WHERE email=?`,
-        [newOtp, now + OTP_EXPIRY_TIME, now, email]
-      );
-
-      await transporter.sendMail({
-        to: email,
-        subject: "SecureUpload OTP Resend",
-        text: `Your new OTP is ${newOtp}. Valid for 5 minutes.`
-      });
-
-      res.json({ message: "OTP resent successfully" });
-    }
+  const result = await db.query(
+    "SELECT * FROM users WHERE email=$1",
+    [email]
   );
+
+  if (result.rows.length === 0)
+    return res.status(400).json({ message: "User not found" });
+
+  const user = result.rows[0];
+
+  if (user.is_verified)
+    return res.status(400).json({ message: "Email already verified" });
+
+  if (user.otp_locked_until && now < user.otp_locked_until) {
+    const wait = Math.ceil((user.otp_locked_until - now) / 1000);
+    return res.status(429).json({ message: `Try again in ${wait}s` });
+  }
+
+  if (now - user.otp_last_sent < OTP_RESEND_COOLDOWN) {
+    return res.status(429).json({ message: "Please wait before resending OTP" });
+  }
+
+  if (user.otp_resend_count >= OTP_RESEND_LIMIT) {
+    await db.query(
+      "UPDATE users SET otp_locked_until=$1 WHERE email=$2",
+      [now + OTP_LOCK_TIME, email]
+    );
+    return res.status(429).json({ message: "OTP resend limit exceeded" });
+  }
+
+  const newOtp = Math.floor(100000 + Math.random() * 900000).toString();
+
+  await db.query(
+    `UPDATE users SET 
+      otp=$1,
+      otp_expiry=$2,
+      otp_resend_count=otp_resend_count+1,
+      otp_last_sent=$3
+     WHERE email=$4`,
+    [newOtp, now + OTP_EXPIRY_TIME, now, email]
+  );
+
+  await transporter.sendMail({
+    to: email,
+    subject: "SecureUpload OTP Resend",
+    text: `Your new OTP is ${newOtp}.`
+  });
+
+  res.json({ message: "OTP resent successfully" });
 });
 
-router.post("/login", (req, res) => {
+/* ================= LOGIN ================= */
+router.post("/login", async (req, res) => {
   const { email, password } = req.body;
 
-  db.query("SELECT * FROM users WHERE email=?", [email], async (err, result) => {
-    if (!result.length)
-      return res.status(400).json({ message: "Invalid email or password" });
+  const result = await db.query(
+    "SELECT * FROM users WHERE email=$1",
+    [email]
+  );
 
-    const user = result[0];
+  if (result.rows.length === 0)
+    return res.status(400).json({ message: "Invalid email or password" });
 
-    if (!user.is_verified)
-      return res.status(400).json({ message: "Email not verified" });
+  const user = result.rows[0];
 
-    const match = await bcrypt.compare(password, user.password);
-    if (!match)
-      return res.status(400).json({ message: "Invalid email or password" });
+  if (!user.is_verified)
+    return res.status(400).json({ message: "Email not verified" });
 
-    const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, {
-      expiresIn: "1h"
-    });
+  const match = await bcrypt.compare(password, user.password);
+  if (!match)
+    return res.status(400).json({ message: "Invalid email or password" });
 
-    res.json({ token });
-  });
+  const token = jwt.sign(
+    { id: user.id },
+    process.env.JWT_SECRET,
+    { expiresIn: "1h" }
+  );
+
+  res.json({ token });
 });
 
 module.exports = router;
