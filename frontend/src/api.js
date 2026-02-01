@@ -1,7 +1,7 @@
 import axios from "axios";
 
 const api = axios.create({
-  baseURL: process.env.REACT_APP_API_URL,
+  baseURL: "https://secure-file-upload-system-m6jq.onrender.com/api",
 });
 
 api.interceptors.request.use((req) => {
