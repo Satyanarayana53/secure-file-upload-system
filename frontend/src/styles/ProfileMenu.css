@@ -1,0 +1,42 @@
+.profile-menu {
+  position: absolute;
+  right: 30px;
+  top: 70px;
+  background: #fff;
+  width: 260px;
+  border-radius: 14px;
+  padding: 20px;
+  box-shadow: 0 20px 40px rgba(0,0,0,0.15);
+  text-align: center;
+}
+
+.profile-img {
+  width: 90px;
+  height: 90px;
+  border-radius: 50%;
+  object-fit: cover;
+  margin-bottom: 10px;
+}
+
+.profile-menu h4 {
+  margin: 5px 0;
+}
+
+.profile-menu p {
+  font-size: 13px;
+  color: #777;
+}
+
+.profile-menu button {
+  width: 100%;
+  margin-top: 10px;
+  padding: 10px;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+}
+
+.profile-menu .logout {
+  background: #e74c3c;
+  color: white;
+}
