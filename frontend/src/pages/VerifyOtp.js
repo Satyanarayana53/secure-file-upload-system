@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "../api";
 import "../styles/VerifyOtp.css";
@@ -18,6 +18,7 @@ function VerifyOtp() {
   const [shake, setShake] = useState(false);
   const [success, setSuccess] = useState(false);
 
+  /* ================= TIMER ================= */
   useEffect(() => {
     if (cooldown === 0) {
       setCanResend(true);
@@ -27,25 +28,8 @@ function VerifyOtp() {
     return () => clearTimeout(timer);
   }, [cooldown]);
 
-  useEffect(() => {
-    if (otp.join("").length === 6 && !loading) {
-      verifyOtp();
-    }
-  }, [otp]);
-
-  const handleChange = (value, index) => {
-    if (!/^[0-9]?$/.test(value)) return;
-
-    const updated = [...otp];
-    updated[index] = value;
-    setOtp(updated);
-
-    if (value && index < 5) {
-      document.getElementById(`otp-${index + 1}`).focus();
-    }
-  };
-
-  const verifyOtp = async () => {
+  /* ================= VERIFY OTP FUNCTION ================= */
+  const verifyOtp = useCallback(async () => {
     setError("");
     setLoading(true);
 
@@ -61,7 +45,6 @@ function VerifyOtp() {
       setTimeout(() => {
         navigate("/login");
       }, 2000);
-
     } catch (err) {
       setShake(true);
       setOtp(["", "", "", "", "", ""]);
@@ -71,8 +54,29 @@ function VerifyOtp() {
     } finally {
       setLoading(false);
     }
+  }, [email, otp, navigate]);
+
+  /* ================= AUTO VERIFY ================= */
+  useEffect(() => {
+    if (otp.join("").length === 6 && !loading) {
+      verifyOtp();
+    }
+  }, [otp, loading, verifyOtp]);
+
+  /* ================= INPUT HANDLER ================= */
+  const handleChange = (value, index) => {
+    if (!/^[0-9]?$/.test(value)) return;
+
+    const updated = [...otp];
+    updated[index] = value;
+    setOtp(updated);
+
+    if (value && index < 5) {
+      document.getElementById(`otp-${index + 1}`).focus();
+    }
   };
 
+  /* ================= RESEND OTP ================= */
   const resendOtp = async () => {
     if (!canResend) return;
 
@@ -81,7 +85,6 @@ function VerifyOtp() {
 
     try {
       await api.post("/auth/resend-otp", { email });
-
       setOtp(["", "", "", "", "", ""]);
       setCooldown(30);
       setCanResend(false);
@@ -92,6 +95,7 @@ function VerifyOtp() {
     }
   };
 
+  /* ================= SUCCESS UI ================= */
   if (success) {
     return (
       <div className="otp-page">
@@ -104,6 +108,7 @@ function VerifyOtp() {
     );
   }
 
+  /* ================= MAIN UI ================= */
   return (
     <div className="otp-page">
       <div className={`otp-card ${shake ? "shake" : ""}`}>
