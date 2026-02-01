@@ -15,7 +15,7 @@ const app = express();
 
 app.use(
   cors({
-    origin: true,
+    origin: ["http://localhost:3000", "https://secure-file-upload-system.netlify.app"],
     credentials: true
   })
 );
