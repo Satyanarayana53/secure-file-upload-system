@@ -20,37 +20,41 @@ function Login() {
   });
   const [registerError, setRegisterError] = useState("");
 
+  /* ========== LOGIN ========== */
   const login = async (e) => {
     e.preventDefault();
     setLoginError("");
 
     try {
-      const res = await api.post("/auth/login", { email, password });
+      const res = await api.post("/auth/login", {
+        email,
+        password
+      });
+
       localStorage.setItem("token", res.data.token);
       navigate("/upload");
+
     } catch (err) {
-      if (err.response?.status === 400) {
-        setLoginError(err.response.data.message);
-      } else {
-        setLoginError("Server error. Try again later.");
-      }
+      setLoginError(
+        err.response?.data?.message || "Server error. Try again later."
+      );
     }
   };
 
+  /* ========== REGISTER ========== */
   const register = async (e) => {
     e.preventDefault();
     setRegisterError("");
 
     try {
       await api.post("/auth/register", regData);
-      alert("OTP sent to your email");
-      navigate("/verify");
+      alert("OTP generated. Check server logs.");
+      navigate("/verify", { state: { email: regData.email } });
+
     } catch (err) {
-      if (err.response?.status === 400) {
-        setRegisterError(err.response.data.message);
-      } else {
-        setRegisterError("Server error. Try again later.");
-      }
+      setRegisterError(
+        err.response?.data?.message || "Server error. Try again later."
+      );
     }
   };
 
@@ -58,52 +62,65 @@ function Login() {
     <div className="auth-wrapper">
       <div className={`container ${isSignUp ? "right-panel-active" : ""}`}>
 
+        {/* SIGN UP */}
         <div className="form-container sign-up-container">
           <form onSubmit={register}>
             <h1>Create Account</h1>
             {registerError && <p className="error">{registerError}</p>}
+
             <input
               type="text"
               placeholder="Username"
-              onChange={e => setRegData({ ...regData, username: e.target.value })}
               required
+              onChange={e =>
+                setRegData({ ...regData, username: e.target.value })
+              }
             />
             <input
               type="email"
               placeholder="Email"
-              onChange={e => setRegData({ ...regData, email: e.target.value })}
               required
+              onChange={e =>
+                setRegData({ ...regData, email: e.target.value })
+              }
             />
             <input
               type="password"
               placeholder="Password"
-              onChange={e => setRegData({ ...regData, password: e.target.value })}
               required
+              onChange={e =>
+                setRegData({ ...regData, password: e.target.value })
+              }
             />
+
             <button className="submit-btn">Sign Up</button>
           </form>
         </div>
 
+        {/* LOGIN */}
         <div className="form-container sign-in-container">
           <form onSubmit={login}>
             <h1>Login</h1>
             {loginError && <p className="error">{loginError}</p>}
+
             <input
               type="email"
               placeholder="Email"
-              onChange={e => setEmail(e.target.value)}
               required
+              onChange={e => setEmail(e.target.value)}
             />
             <input
               type="password"
               placeholder="Password"
-              onChange={e => setPassword(e.target.value)}
               required
+              onChange={e => setPassword(e.target.value)}
             />
+
             <button className="submit-btn">Login</button>
           </form>
         </div>
 
+        {/* OVERLAY */}
         <div className="overlay-container">
           <div className="overlay">
             <div className="overlay-panel overlay-left">
@@ -119,6 +136,7 @@ function Login() {
                 Login
               </button>
             </div>
+
             <div className="overlay-panel overlay-right">
               <h1>Hello, Friend!</h1>
               <p>Enter your details and start your journey</p>
