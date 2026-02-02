@@ -67,7 +67,7 @@ router.post("/", auth, upload.single("file"), async (req, res) => {
       `
       INSERT INTO files
       (user_id, original_name, stored_name, file_type, file_size)
-      VALUES (?, ?, ?, ?, ?)
+      VALUES ($1, $2, $3, $4, $5)
       `,
       [
         req.userId,

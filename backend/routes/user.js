@@ -23,13 +23,13 @@ const auth = (req, res, next) => {
 
 router.get("/profile", auth, (req, res) => {
   db.query(
-    "SELECT username, email, profile_pic FROM users WHERE id=?",
+    "SELECT username, email, profile_pic FROM users WHERE id=$1",
     [req.userId],
     (err, result) => {
-      if (err || !result.length)
+      if (err || result.rows.length === 0)
         return res.status(400).json({ message: "User not found" });
 
-      res.json(result[0]);
+      res.json(result.rows[0]);
     }
   );
 });
@@ -47,7 +47,7 @@ router.post("/profile-pic", auth, upload.single("photo"), (req, res) => {
   const fileName = req.file.filename;
 
   db.query(
-    "UPDATE users SET profile_pic=? WHERE id=?",
+    "UPDATE users SET profile_pic=$1 WHERE id=$2",
     [fileName, req.userId],
     () => {
       res.json({ profile_pic: fileName });
@@ -57,14 +57,14 @@ router.post("/profile-pic", auth, upload.single("photo"), (req, res) => {
 
 router.delete("/profile-pic", auth, (req, res) => {
   db.query(
-    "SELECT profile_pic FROM users WHERE id=?",
+    "SELECT profile_pic FROM users WHERE id=$1",
     [req.userId],
     (err, result) => {
-      if (!result.length) {
+      if (result.rows.length === 0) {
         return res.status(400).json({ message: "User not found" });
       }
 
-      const oldPic = result[0].profile_pic;
+      const oldPic = result.rows[0].profile_pic;
 
       if (oldPic && oldPic !== "default.png") {
         const filePath = path.join("uploads/profile", oldPic);
@@ -74,7 +74,7 @@ router.delete("/profile-pic", auth, (req, res) => {
       }
 
       db.query(
-        "UPDATE users SET profile_pic='default.png' WHERE id=?",
+        "UPDATE users SET profile_pic='default.png' WHERE id=$1",
         [req.userId],
         () => {
           res.json({ profile_pic: "default.png" });

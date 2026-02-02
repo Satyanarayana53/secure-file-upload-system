@@ -8,10 +8,10 @@ const TOTAL_STORAGE = 5 * 1024 * 1024 * 1024;
 
 router.get("/", authMiddleware, async (req, res) => {
   try {
-    const userId = req.user.id;
+    const userId = req.userId;
 
-    const [rows] = await db.query(
-      "SELECT SUM(file_size) AS used FROM files WHERE user_id = ? AND is_deleted = 0",
+    const { rows } = await db.query(
+      "SELECT SUM(file_size) AS used FROM files WHERE user_id = $1 AND is_deleted = false",
       [userId]
     );
 

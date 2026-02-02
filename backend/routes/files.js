@@ -14,26 +14,26 @@ router.get("/", auth, (req, res) => {
   if (type === "recent") {
     sql = `
       SELECT * FROM files
-      WHERE user_id = ? AND is_deleted = 0
+      WHERE user_id = $1 AND is_deleted = false
       ORDER BY uploaded_at DESC
       LIMIT 10
     `;
   } else if (type === "starred") {
     sql = `
       SELECT * FROM files
-      WHERE user_id = ? AND is_starred = 1 AND is_deleted = 0
+      WHERE user_id = $1 AND is_starred = true AND is_deleted = false
       ORDER BY uploaded_at DESC
     `;
   } else if (type === "trash") {
     sql = `
       SELECT * FROM files
-      WHERE user_id = ? AND is_deleted = 1
+      WHERE user_id = $1 AND is_deleted = true
       ORDER BY deleted_at DESC
     `;
   } else {
     sql = `
       SELECT * FROM files
-      WHERE user_id = ? AND is_deleted = 0
+      WHERE user_id = $1 AND is_deleted = false
       ORDER BY uploaded_at DESC
     `;
   }
@@ -43,13 +43,13 @@ router.get("/", auth, (req, res) => {
       console.error("DB ERROR:", err);
       return res.status(500).json({ message: "Database error" });
     }
-    res.json(results);
+    res.json(results.rows);
   });
 });
 
 router.put("/star/:id", auth, (req, res) => {
   db.query(
-    `UPDATE files SET is_starred = NOT is_starred WHERE id=? AND user_id=?`,
+    `UPDATE files SET is_starred = NOT is_starred WHERE id=$1 AND user_id=$2`,
     [req.params.id, req.userId],
     (err) => {
       if (err) return res.status(500).json({ message: "Star failed" });
@@ -62,8 +62,8 @@ router.delete("/:id", auth, (req, res) => {
   db.query(
     `
     UPDATE files
-    SET is_deleted = 1, deleted_at = ?
-    WHERE id = ? AND user_id = ?
+    SET is_deleted = true, deleted_at = $1
+    WHERE id = $2 AND user_id = $3
     `,
     [Date.now(), req.params.id, req.userId],
     (err) => {
@@ -77,8 +77,8 @@ router.put("/restore/:id", auth, (req, res) => {
   db.query(
     `
     UPDATE files
-    SET is_deleted = 0, deleted_at = NULL
-    WHERE id = ? AND user_id = ?
+    SET is_deleted = false, deleted_at = NULL
+    WHERE id = $1 AND user_id = $2
     `,
     [req.params.id, req.userId],
     (err) => {
@@ -90,17 +90,17 @@ router.put("/restore/:id", auth, (req, res) => {
 
 router.delete("/permanent/:id", auth, (req, res) => {
   db.query(
-    `SELECT stored_name FROM files WHERE id=? AND user_id=?`,
+    `SELECT stored_name FROM files WHERE id=$1 AND user_id=$2`,
     [req.params.id, req.userId],
-    (err, rows) => {
-      if (err || rows.length === 0) {
+    (err, result) => {
+      if (err || result.rows.length === 0) {
         return res.status(404).json({ message: "File not found" });
       }
 
       const filePath = path.join(
         "uploads",
         "files",
-        rows[0].stored_name
+        result.rows[0].stored_name
       );
 
       if (fs.existsSync(filePath)) {
@@ -108,7 +108,7 @@ router.delete("/permanent/:id", auth, (req, res) => {
       }
 
       db.query(
-        `DELETE FROM files WHERE id=? AND user_id=?`,
+        `DELETE FROM files WHERE id=$1 AND user_id=$2`,
         [req.params.id, req.userId],
         () => res.json({ success: true })
       );
@@ -121,11 +121,11 @@ router.get("/download/:id", auth, (req, res) => {
     `
     SELECT original_name, stored_name 
     FROM files 
-    WHERE id = ? AND user_id = ? AND is_deleted = 0
+    WHERE id = $1 AND user_id = $2 AND is_deleted = false
     `,
     [req.params.id, req.userId],
     (err, result) => {
-      if (err || result.length === 0) {
+      if (err || result.rows.length === 0) {
         return res.status(404).json({ message: "File not found" });
       }
     
@@ -134,14 +134,14 @@ router.get("/download/:id", auth, (req, res) => {
         "..",
         "uploads",
         "files",
-        result[0].stored_name
+        result.rows[0].stored_name
       );
 
       if (!fs.existsSync(filePath)) {
         return res.status(404).json({ message: "File missing" });
       }
 
-      res.download(filePath, result[0].original_name);
+      res.download(filePath, result.rows[0].original_name);
     }
   );
 });
@@ -151,7 +151,7 @@ router.get("/storage", auth, (req, res) => {
   const TOTAL_STORAGE = 5 * 1024 * 1024 * 1024; // 5GB
 
   db.query(
-    "SELECT IFNULL(SUM(file_size), 0) AS used FROM files WHERE user_id=? AND is_deleted=0",
+    "SELECT COALESCE(SUM(file_size), 0) AS used FROM files WHERE user_id=$1 AND is_deleted=false",
     [req.userId],
     (err, result) => {
       if (err) {
@@ -159,7 +159,7 @@ router.get("/storage", auth, (req, res) => {
       }
 
       res.json({
-        used: result[0].used,
+        used: result.rows[0].used,
         total: TOTAL_STORAGE
       });
     }

@@ -2,7 +2,7 @@ const express = require("express");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const nodemailer = require("nodemailer");
-const db = require("../config/db"); // pg Pool
+const db = require("../config/db");
 
 const router = express.Router();
 
@@ -60,7 +60,7 @@ router.post("/register", async (req, res) => {
 });
 
 /* ================= VERIFY OTP ================= */
-router.post("/verify", async (req, res) => {
+router.post("/verify-otp", async (req, res) => {
   const { email, otp } = req.body;
   const now = Date.now();
 

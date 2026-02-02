@@ -29,7 +29,7 @@ router.post("/upload", auth, upload.single("photo"), (req, res) => {
   const imgPath = `/uploads/profile/${req.file.filename}`;
 
   db.query(
-    "UPDATE users SET profile_pic=? WHERE id=?",
+    "UPDATE users SET profile_pic=$1 WHERE id=$2",
     [imgPath, req.userId],
     () => {
       res.json({

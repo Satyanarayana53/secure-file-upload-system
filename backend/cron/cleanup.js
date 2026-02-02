@@ -7,12 +7,12 @@ cron.schedule("0 0 * * *", () => {
   const limit = Date.now() - 2 * 24 * 60 * 60 * 1000;
 
   db.query(
-    `SELECT id, stored_name FROM files WHERE is_deleted = 1 AND deleted_at < ?`,
+    `SELECT id, stored_name FROM files WHERE is_deleted = true AND deleted_at < $1`,
     [limit],
-    (err, files) => {
-      if (err || !files.length) return;
+    (err, result) => {
+      if (err || !result.rows.length) return;
 
-      files.forEach(file => {
+      result.rows.forEach(file => {
         const filePath = path.join(
           "uploads",
           "files",
@@ -23,7 +23,7 @@ cron.schedule("0 0 * * *", () => {
           fs.unlinkSync(filePath);
         }
 
-        db.query("DELETE FROM files WHERE id = ?", [file.id]);
+        db.query("DELETE FROM files WHERE id = $1", [file.id]);
       });
     }
   );
