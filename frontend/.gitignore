@@ -39,17 +39,13 @@ Thumbs.db
 .vscode/
 .idea/
 
-# ===============================
-# Build folders
-# ===============================
-build/
-dist/
+
 
 # ===============================
 # React
 # ===============================
 frontend/node_modules/
-frontend/build/
+
 
 # ===============================
 # Database dumps / backups
