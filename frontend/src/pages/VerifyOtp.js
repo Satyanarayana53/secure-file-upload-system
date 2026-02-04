@@ -14,7 +14,7 @@ function VerifyOtp() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const [cooldown, setCooldown] = useState(30);
+  const [countdown, setCountdown] = useState(30);
   const [canResend, setCanResend] = useState(false);
   const [resendLoading, setResendLoading] = useState(false);
 
@@ -24,19 +24,23 @@ function VerifyOtp() {
   /* ================= GUARD: NO EMAIL ================= */
   useEffect(() => {
     if (!email) {
-      navigate("/register");
+      navigate("/login");
     }
   }, [email, navigate]);
 
   /* ================= TIMER ================= */
   useEffect(() => {
-    if (cooldown === 0) {
+    if (countdown === 0) {
       setCanResend(true);
       return;
     }
-    const timer = setTimeout(() => setCooldown(cooldown - 1), 1000);
-    return () => clearTimeout(timer);
-  }, [cooldown]);
+
+    const timerId = setTimeout(() => {
+      setCountdown((prev) => prev - 1);
+    }, 1000);
+
+    return () => clearTimeout(timerId);
+  }, [countdown]);
 
   /* ================= VERIFY OTP FUNCTION ================= */
   const verifyOtp = useCallback(async () => {
@@ -96,7 +100,7 @@ function VerifyOtp() {
     try {
       await api.post("/auth/resend-otp", { email });
       setOtp(["", "", "", "", "", ""]);
-      setCooldown(30);
+      setCountdown(30);
       setCanResend(false);
     } catch (err) {
       setError(err.response?.data?.message || "Resend blocked");
@@ -151,11 +155,11 @@ function VerifyOtp() {
               cy="30"
               r="26"
               style={{
-                strokeDashoffset: 164 - (164 * (30 - cooldown)) / 30
+                strokeDashoffset: 164 - (164 * (30 - countdown)) / 30
               }}
             ></circle>
           </svg>
-          <span>{cooldown}s</span>
+          <span>{countdown}s</span>
         </div>
 
         <div className="otp-resend">
