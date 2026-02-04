@@ -47,14 +47,23 @@ router.post("/register", async (req, res) => {
       ]
     );
 
-    await transporter.sendMail({
-      from: `"SecureUpload" <${process.env.EMAIL_USER}>`,
-      to: email,
-      subject: "SecureUpload OTP Verification",
-      text: `Your OTP is ${otp}. It is valid for 5 minutes.`
-    });
+    // Log OTP to server logs so you can see it in Render,
+    // and don't fail registration if email sending is blocked.
+    console.log(`OTP for ${email}: ${otp}`);
 
-    res.json({ message: "OTP sent to email" });
+    try {
+      await transporter.sendMail({
+        from: `"SecureUpload" <${process.env.EMAIL_USER}>`,
+        to: email,
+        subject: "SecureUpload OTP Verification",
+        text: `Your OTP is ${otp}. It is valid for 5 minutes.`
+      });
+    } catch (emailErr) {
+      console.error("EMAIL SEND ERROR (register):", emailErr.message);
+      // continue without failing the request
+    }
+
+    res.json({ message: "OTP generated and user created" });
 
   } catch (err) {
     if (err.code === "23505") {
