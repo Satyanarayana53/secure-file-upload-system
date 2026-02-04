@@ -12,14 +12,12 @@ const OTP_RESEND_LIMIT = 3;
 const OTP_RESEND_COOLDOWN = 60 * 1000;
 const OTP_LOCK_TIME = 10 * 60 * 1000;
 
-/* ================= EMAIL (BREVO SMTP) ================= */
+/* ================= EMAIL (GMAIL SMTP with App Password) ================= */
 const transporter = nodemailer.createTransport({
-  host: process.env.EMAIL_HOST,          // smtp-relay.brevo.com
-  port: process.env.EMAIL_PORT,          // 587
-  secure: false,                         // true only for 465
+  service: "gmail",
   auth: {
-    user: process.env.EMAIL_USER,        // Brevo email
-    pass: process.env.EMAIL_PASS         // Brevo SMTP KEY
+    user: process.env.EMAIL_USER, // your Gmail address
+    pass: process.env.EMAIL_PASS  // Gmail app password
   }
 });
 
@@ -55,8 +53,19 @@ router.post("/register", async (req, res) => {
       .sendMail({
         from: `"SecureUpload" <${process.env.EMAIL_USER}>`,
         to: email,
-        subject: "SecureUpload OTP Verification",
-        text: `Your OTP is ${otp}. It is valid for 5 minutes.`
+        subject: "SecureUpload - Email Verification Code",
+        text: `Hi ${username},\n\nYour SecureUpload verification code is ${otp}. It is valid for 5 minutes.\n\nIf you did not request this, you can safely ignore this email.\n\nBest regards,\nSecureUpload Team`,
+        html: `
+          <div style="font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; color: #0f172a;">
+            <h2 style="color:#0f172a;margin-bottom:8px;">SecureUpload Verification</h2>
+            <p>Hi <strong>${username}</strong>,</p>
+            <p>Your verification code is:</p>
+            <p style="font-size:24px;font-weight:700;letter-spacing:4px;color:#2563eb;margin:16px 0;">${otp}</p>
+            <p>This code is valid for <strong>5 minutes</strong>.</p>
+            <p style="font-size:13px;color:#6b7280;">If you did not request this code, you can safely ignore this email.</p>
+            <p style="margin-top:24px;">Best regards,<br/><strong>SecureUpload Team</strong></p>
+          </div>
+        `
       })
       .then(() => {
         console.log(`OTP email queued for ${email}`);
@@ -171,8 +180,18 @@ router.post("/resend-otp", async (req, res) => {
     await transporter.sendMail({
       from: `"SecureUpload" <${process.env.EMAIL_USER}>`,
       to: email,
-      subject: "SecureUpload OTP Resend",
-      text: `Your new OTP is ${newOtp}.`
+      subject: "SecureUpload - New Verification Code",
+      text: `Hi,\n\nYour new SecureUpload verification code is ${newOtp}. It is valid for 5 minutes.\n\nIf you did not request this, you can safely ignore this email.\n\nBest regards,\nSecureUpload Team`,
+      html: `
+        <div style="font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; color: #0f172a;">
+          <h2 style="color:#0f172a;margin-bottom:8px;">SecureUpload New Verification Code</h2>
+          <p>Your new verification code is:</p>
+          <p style="font-size:24px;font-weight:700;letter-spacing:4px;color:#2563eb;margin:16px 0;">${newOtp}</p>
+          <p>This code is valid for <strong>5 minutes</strong>.</p>
+          <p style="font-size:13px;color:#6b7280;">If you did not request this code, you can safely ignore this email.</p>
+          <p style="margin-top:24px;">Best regards,<br/><strong>SecureUpload Team</strong></p>
+        </div>
+      `
     });
 
     res.json({ message: "OTP resent successfully" });
