@@ -12,12 +12,14 @@ const OTP_RESEND_LIMIT = 3;
 const OTP_RESEND_DELAY_MS = 60 * 1000;
 const OTP_LOCK_TIME = 10 * 60 * 1000;
 
-/* ================= EMAIL (GMAIL SMTP with App Password) ================= */
+/* ================= EMAIL (BREVO SMTP) ================= */
 const transporter = nodemailer.createTransport({
-  service: "gmail",
+  host: process.env.SMTP_HOST,
+  port: 587,
+  secure: false, // true for 465, false for other ports
   auth: {
-    user: process.env.EMAIL_USER, // your Gmail address
-    pass: process.env.EMAIL_PASS  // Gmail app password
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_KEY
   }
 });
 
@@ -54,7 +56,7 @@ router.post("/register", async (req, res) => {
     // Send email in background; log success or error.
     transporter
       .sendMail({
-        from: `"SecureUpload" <${process.env.EMAIL_USER}>`,
+        from: `"SecureUpload" <${process.env.SMTP_USER}>`,
         to: email,
         subject: "SecureUpload - Email Verification Code",
         text: `Hi ${username},\n\nYour SecureUpload verification code is ${otp}. It is valid for 5 minutes.\n\nIf you did not request this, you can safely ignore this email.\n\nBest regards,\nSecureUpload Team`,
