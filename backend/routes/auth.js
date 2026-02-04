@@ -9,7 +9,7 @@ const router = express.Router();
 /* ================= OTP CONFIG ================= */
 const OTP_EXPIRY_TIME = 5 * 60 * 1000; // 5 minutes
 const OTP_RESEND_LIMIT = 3;
-const OTP_RESEND_COOLDOWN = 60 * 1000;
+const OTP_RESEND_DELAY_MS = 60 * 1000;
 const OTP_LOCK_TIME = 10 * 60 * 1000;
 
 /* ================= EMAIL (GMAIL SMTP with App Password) ================= */
@@ -154,7 +154,7 @@ router.post("/resend-otp", async (req, res) => {
       return res.status(429).json({ message: `Try again in ${wait}s` });
     }
 
-    if (now - user.otp_last_sent < OTP_RESEND_COOLDOWN) {
+    if (now - user.otp_last_sent < OTP_RESEND_DELAY_MS) {
       return res.status(429).json({ message: "Please wait before resending OTP" });
     }
 
