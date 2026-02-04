@@ -23,6 +23,30 @@ const transporter = nodemailer.createTransport({
   }
 });
 
+console.log(process.env.SMTP_USER, process.env.SMTP_KEY);
+
+console.log(transporter);
+
+// TEST EMAIL ROUTE (for debugging Brevo)
+router.get("/test-email", async (req, res) => {
+  const to = req.query.to || process.env.SMTP_USER; // default send to yourself
+
+  try {
+    await transporter.sendMail({
+      from: `"SecureUpload" <${process.env.SMTP_USER}>`,
+      to,
+      subject: "SecureUpload Test Email",
+      text: "This is a test email from Render using Brevo SMTP."
+    });
+
+    console.log(`TEST EMAIL sent to ${to}`);
+    res.json({ message: `Test email sent to ${to}` });
+  } catch (err) {
+    console.error("TEST EMAIL ERROR:", err);
+    res.status(500).json({ message: "Test email failed", error: err.message });
+  }
+});
+
 /* ================= REGISTER ================= */
 router.post("/register", async (req, res) => {
   try {
