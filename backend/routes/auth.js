@@ -48,9 +48,12 @@ router.post("/register", async (req, res) => {
     // Log OTP to server logs so you can see it in Render.
     console.log(`OTP for ${email}: ${otp}`);
 
-    // Send email and log clear success or error.
-    try {
-      await transporter.sendMail({
+    // Respond to client immediately so signup is fast.
+    res.json({ message: "OTP generated and user created" });
+
+    // Send email in background; log success or error.
+    transporter
+      .sendMail({
         from: `"SecureUpload" <${process.env.EMAIL_USER}>`,
         to: email,
         subject: "SecureUpload - Email Verification Code",
@@ -66,13 +69,13 @@ router.post("/register", async (req, res) => {
             <p style="margin-top:24px;">Best regards,<br/><strong>SecureUpload Team</strong></p>
           </div>
         `
+      })
+      .then(() => {
+        console.log(`OTP email sent to ${email}`);
+      })
+      .catch((emailErr) => {
+        console.error("EMAIL SEND ERROR (register):", emailErr);
       });
-      console.log(`OTP email sent to ${email}`);
-    } catch (emailErr) {
-      console.error("EMAIL SEND ERROR (register):", emailErr);
-    }
-
-    res.json({ message: "OTP generated and user created" });
 
   } catch (err) {
     if (err.code === "23505") {
