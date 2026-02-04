@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import api from "../api";
 import "../styles/VerifyOtp.css";
 
 function VerifyOtp() {
   const navigate = useNavigate();
-  const email = localStorage.getItem("verifyEmail");
+  const location = useLocation();
+  const emailFromState = location.state?.email;
+  const storedEmail = localStorage.getItem("verifyEmail");
+  const email = emailFromState || storedEmail;
 
   const [otp, setOtp] = useState(["", "", "", "", "", ""]);
   const [error, setError] = useState("");
@@ -17,6 +20,13 @@ function VerifyOtp() {
 
   const [shake, setShake] = useState(false);
   const [success, setSuccess] = useState(false);
+
+  /* ================= GUARD: NO EMAIL ================= */
+  useEffect(() => {
+    if (!email) {
+      navigate("/register");
+    }
+  }, [email, navigate]);
 
   /* ================= TIMER ================= */
   useEffect(() => {
@@ -34,7 +44,7 @@ function VerifyOtp() {
     setLoading(true);
 
     try {
-      await api.post("/auth/verify", {
+      await api.post("/auth/verify-otp", {
         email,
         otp: otp.join("")
       });

@@ -48,6 +48,10 @@ function Login() {
 
     try {
       await api.post("/auth/register", regData);
+
+      // Persist email so VerifyOtp can use it
+      localStorage.setItem("verifyEmail", regData.email);
+
       alert("OTP generated. Check server logs.");
       navigate("/verify", { state: { email: regData.email } });
 
