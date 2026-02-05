@@ -217,7 +217,7 @@ router.post("/resend-otp", async (req, res) => {
     );
 
     await transporter.sendMail({
-      from: `"SecureUpload" <${process.env.EMAIL_USER}>`,
+      from: `"SecureUpload" <${process.env.SMTP_USER}>`,
       to: email,
       subject: "SecureUpload - New Verification Code",
       text: `Hi,\n\nYour new SecureUpload verification code is ${newOtp}. It is valid for 5 minutes.\n\nIf you did not request this, you can safely ignore this email.\n\nBest regards,\nSecureUpload Team`,
