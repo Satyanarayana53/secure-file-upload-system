@@ -23,9 +23,6 @@ const transporter = nodemailer.createTransport({
   }
 });
 
-console.log(process.env.SMTP_USER, process.env.SMTP_KEY);
-
-console.log(transporter);
 
 // TEST EMAIL ROUTE (for debugging Brevo)
 router.get("/test-email", async (req, res) => {
