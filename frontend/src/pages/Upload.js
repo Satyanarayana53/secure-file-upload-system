@@ -185,7 +185,7 @@ function Upload() {
               src={
                 user.profile_pic === "default.png"
                   ? "/default-avatar.png"
-                  : `http://localhost:5000/uploads/profile/${user.profile_pic}`
+                  : `https://secure-file-upload-system-m6jq.onrender.com/uploads/profile/${user.profile_pic}`
               }
               className="header-profile-pic"
               alt="profile"
