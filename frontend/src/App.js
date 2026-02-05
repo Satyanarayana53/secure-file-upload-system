@@ -2,7 +2,6 @@ import { Route, BrowserRouter as Router, Routes } from "react-router-dom";
 
 import Login from "./pages/Login";
 import Upload from "./pages/Upload";
-import Verify from "./pages/VerifyOtp";
 import ProtectedRoute from "./routes/ProtectedRoute";
 
 function App() {
@@ -12,7 +11,6 @@ function App() {
 
         <Route path="/" element={<Login />} />
         <Route path="/login" element={<Login />} />
-        <Route path="/verify" element={<Verify />} />
 
         <Route
           path="/upload"

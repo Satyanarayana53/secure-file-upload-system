@@ -49,11 +49,9 @@ function Login() {
     try {
       await api.post("/auth/register", regData);
 
-      // Persist email so VerifyOtp can use it
-      localStorage.setItem("verifyEmail", regData.email);
-
-      alert("OTP generated. Check server logs.");
-      navigate("/verify", { state: { email: regData.email } });
+      alert("Account created successfully! Please login.");
+      setRegData({ username: "", email: "", password: "" }); // Clear form
+      setIsSignUp(false); // Switch to login view
 
     } catch (err) {
       setRegisterError(
@@ -75,6 +73,7 @@ function Login() {
             <input
               type="text"
               placeholder="Username"
+              value={regData.username}
               required
               onChange={e =>
                 setRegData({ ...regData, username: e.target.value })
@@ -83,6 +82,7 @@ function Login() {
             <input
               type="email"
               placeholder="Email"
+              value={regData.email}
               required
               onChange={e =>
                 setRegData({ ...regData, email: e.target.value })
@@ -91,6 +91,7 @@ function Login() {
             <input
               type="password"
               placeholder="Password"
+              value={regData.password}
               required
               onChange={e =>
                 setRegData({ ...regData, password: e.target.value })
@@ -110,12 +111,14 @@ function Login() {
             <input
               type="email"
               placeholder="Email"
+              value={email}
               required
               onChange={e => setEmail(e.target.value)}
             />
             <input
               type="password"
               placeholder="Password"
+              value={password}
               required
               onChange={e => setPassword(e.target.value)}
             />

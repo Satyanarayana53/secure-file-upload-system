@@ -20,10 +20,8 @@ function Register() {
     try {
       await api.post("/auth/register", data);
 
-      localStorage.setItem("verifyEmail", data.email);
-
-      alert("OTP sent to your email");
-      navigate("/verify");
+      alert("Account created successfully! Please login.");
+      navigate("/login");
     } catch (err) {
       setError("Registration failed. Email may already exist.");
     } finally {
