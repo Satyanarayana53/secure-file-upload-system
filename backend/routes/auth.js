@@ -66,16 +66,13 @@ router.post("/register", async (req, res) => {
         to: email,
         subject: "SecureUpload - Email Verification Code",
         html: `
-          <div style="font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; color: #0f172a;">
-            <h2 style="color:#0f172a;margin-bottom:8px;">SecureUpload Verification</h2>
-            <p>Hi <strong>${username}</strong>,</p>
-            <p>Your verification code is:</p>
-            <p style="font-size:24px;font-weight:700;letter-spacing:4px;color:#2563eb;margin:16px 0;">${otp}</p>
-            <p>This code is valid for <strong>5 minutes</strong>.</p>
-            <p style="font-size:13px;color:#6b7280;">If you did not request this code, you can safely ignore this email.</p>
-            <p style="margin-top:24px;">Best regards,<br/><strong>SecureUpload Team</strong></p>
-          </div>
-        `,
+    <div style="font-family: Arial; line-height:1.6;">
+      <h2>SecureUpload Verification</h2>
+      <p>Your OTP is:</p>
+      <h1 style="letter-spacing:4px;">${otp}</h1>
+      <p>Valid for 5 minutes.</p>
+    </div>
+  `,
       });
 
       console.log("✅ OTP Email Sent");
