@@ -74,10 +74,19 @@ router.post("/register", async (req, res) => {
     // Log OTP to server logs so you can see it in Render.
     console.log(`OTP for ${email}: ${otp}`);
 
+    // Check if SMTP env vars are set
+    if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_KEY) {
+      console.error("SMTP CONFIG ERROR: Missing environment variables!");
+      console.error(`SMTP_HOST: ${process.env.SMTP_HOST ? 'SET' : 'MISSING'}`);
+      console.error(`SMTP_USER: ${process.env.SMTP_USER ? 'SET' : 'MISSING'}`);
+      console.error(`SMTP_KEY: ${process.env.SMTP_KEY ? 'SET' : 'MISSING'}`);
+    }
+
     // Respond to client immediately so signup is fast.
     res.json({ message: "OTP generated and user created" });
 
     // Send email in background; log success or error.
+    console.log(`Attempting to send OTP email to ${email} via ${process.env.SMTP_HOST || 'SMTP'}`);
     transporter
       .sendMail({
         from: `"SecureUpload" <${process.env.SMTP_USER}>`,
@@ -97,10 +106,13 @@ router.post("/register", async (req, res) => {
         `
       })
       .then(() => {
-        console.log(`OTP email sent to ${email}`);
+        console.log(`✅ OTP email sent successfully to ${email}`);
       })
       .catch((emailErr) => {
-        console.error("EMAIL SEND ERROR (register):", emailErr);
+        console.error("❌ EMAIL SEND ERROR (register):");
+        console.error("Error message:", emailErr.message);
+        console.error("Error code:", emailErr.code);
+        console.error("Full error:", JSON.stringify(emailErr, null, 2));
       });
 
   } catch (err) {
