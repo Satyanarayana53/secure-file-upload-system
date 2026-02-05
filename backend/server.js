@@ -24,6 +24,8 @@ app.use(
 /* Body parser */
 app.use(express.json());
 
+app.use("/api/auth", authRoutes);
+
 /* Static files */
 app.use("/uploads/profile", express.static("uploads/profile"));
 
