@@ -12,35 +12,32 @@ const OTP_RESEND_LIMIT = 3;
 const OTP_RESEND_DELAY_MS = 60 * 1000;
 const OTP_LOCK_TIME = 10 * 60 * 1000;
 
-/* ================= EMAIL (BREVO SMTP) ================= */
+/* ================= BREVO SMTP CONFIG ================= */
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST,
   port: 587,
-  secure: false, // true for 465, false for other ports
+  secure: false,
   auth: {
     user: process.env.SMTP_USER,
-    pass: process.env.SMTP_KEY
-  }
+    pass: process.env.SMTP_KEY,
+  },
 });
 
-
-// TEST EMAIL ROUTE (for debugging Brevo)
+/* ================= TEST EMAIL ROUTE ================= */
 router.get("/test-email", async (req, res) => {
-  const to = req.query.to || process.env.SMTP_USER; // default send to yourself
-
   try {
     await transporter.sendMail({
       from: `"SecureUpload" <${process.env.SMTP_USER}>`,
-      to,
+      to: req.query.to || process.env.SMTP_USER,
       subject: "SecureUpload Test Email",
-      text: "This is a test email from Render using Brevo SMTP."
+      text: "This is a test email from Brevo SMTP.",
     });
 
-    console.log(`TEST EMAIL sent to ${to}`);
-    res.json({ message: `Test email sent to ${to}` });
+    console.log("✅ Test email sent");
+    res.json({ message: "Test email sent successfully" });
   } catch (err) {
-    console.error("TEST EMAIL ERROR:", err);
-    res.status(500).json({ message: "Test email failed", error: err.message });
+    console.error("❌ TEST EMAIL ERROR:", err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -55,8 +52,8 @@ router.post("/register", async (req, res) => {
 
     await db.query(
       `INSERT INTO users
-       (username, email, password, otp, otp_expiry, otp_resend_count, otp_last_sent)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      (username, email, password, otp, otp_expiry, otp_resend_count, otp_last_sent)
+      VALUES ($1,$2,$3,$4,$5,$6,$7)`,
       [
         username,
         email,
@@ -64,32 +61,18 @@ router.post("/register", async (req, res) => {
         otp,
         now + OTP_EXPIRY_TIME,
         0,
-        now
+        now,
       ]
     );
 
-    // Log OTP to server logs so you can see it in Render.
     console.log(`OTP for ${email}: ${otp}`);
 
-    // Check if SMTP env vars are set
-    if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_KEY) {
-      console.error("SMTP CONFIG ERROR: Missing environment variables!");
-      console.error(`SMTP_HOST: ${process.env.SMTP_HOST ? 'SET' : 'MISSING'}`);
-      console.error(`SMTP_USER: ${process.env.SMTP_USER ? 'SET' : 'MISSING'}`);
-      console.error(`SMTP_KEY: ${process.env.SMTP_KEY ? 'SET' : 'MISSING'}`);
-    }
-
-    // Respond to client immediately so signup is fast.
-    res.json({ message: "OTP generated and user created" });
-
-    // Send email in background; log success or error.
-    console.log(`Attempting to send OTP email to ${email} via ${process.env.SMTP_HOST || 'SMTP'}`);
-    transporter
-      .sendMail({
+    // Send Email
+    try {
+      await transporter.sendMail({
         from: `"SecureUpload" <${process.env.SMTP_USER}>`,
         to: email,
         subject: "SecureUpload - Email Verification Code",
-        text: `Hi ${username},\n\nYour SecureUpload verification code is ${otp}. It is valid for 5 minutes.\n\nIf you did not request this, you can safely ignore this email.\n\nBest regards,\nSecureUpload Team`,
         html: `
           <div style="font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; color: #0f172a;">
             <h2 style="color:#0f172a;margin-bottom:8px;">SecureUpload Verification</h2>
@@ -100,17 +83,15 @@ router.post("/register", async (req, res) => {
             <p style="font-size:13px;color:#6b7280;">If you did not request this code, you can safely ignore this email.</p>
             <p style="margin-top:24px;">Best regards,<br/><strong>SecureUpload Team</strong></p>
           </div>
-        `
-      })
-      .then(() => {
-        console.log(`✅ OTP email sent successfully to ${email}`);
-      })
-      .catch((emailErr) => {
-        console.error("❌ EMAIL SEND ERROR (register):");
-        console.error("Error message:", emailErr.message);
-        console.error("Error code:", emailErr.code);
-        console.error("Full error:", JSON.stringify(emailErr, null, 2));
+        `,
       });
+
+      console.log("✅ OTP Email Sent");
+    } catch (mailError) {
+      console.error("❌ EMAIL SEND ERROR:", mailError.message);
+    }
+
+    res.json({ message: "OTP generated and email sent" });
 
   } catch (err) {
     if (err.code === "23505") {
@@ -184,30 +165,12 @@ router.post("/resend-otp", async (req, res) => {
     if (user.is_verified)
       return res.status(400).json({ message: "Email already verified" });
 
-    if (user.otp_locked_until && now < user.otp_locked_until) {
-      const wait = Math.ceil((user.otp_locked_until - now) / 1000);
-      return res.status(429).json({ message: `Try again in ${wait}s` });
-    }
-
-    if (now - user.otp_last_sent < OTP_RESEND_DELAY_MS) {
-      return res.status(429).json({ message: "Please wait before resending OTP" });
-    }
-
-    if (user.otp_resend_count >= OTP_RESEND_LIMIT) {
-      await db.query(
-        "UPDATE users SET otp_locked_until=$1 WHERE email=$2",
-        [now + OTP_LOCK_TIME, email]
-      );
-      return res.status(429).json({ message: "OTP resend limit exceeded" });
-    }
-
     const newOtp = Math.floor(100000 + Math.random() * 900000).toString();
 
     await db.query(
       `UPDATE users SET
         otp=$1,
         otp_expiry=$2,
-        otp_resend_count=otp_resend_count+1,
         otp_last_sent=$3
        WHERE email=$4`,
       [newOtp, now + OTP_EXPIRY_TIME, now, email]
@@ -216,24 +179,14 @@ router.post("/resend-otp", async (req, res) => {
     await transporter.sendMail({
       from: `"SecureUpload" <${process.env.SMTP_USER}>`,
       to: email,
-      subject: "SecureUpload - New Verification Code",
-      text: `Hi,\n\nYour new SecureUpload verification code is ${newOtp}. It is valid for 5 minutes.\n\nIf you did not request this, you can safely ignore this email.\n\nBest regards,\nSecureUpload Team`,
-      html: `
-        <div style="font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; color: #0f172a;">
-          <h2 style="color:#0f172a;margin-bottom:8px;">SecureUpload New Verification Code</h2>
-          <p>Your new verification code is:</p>
-          <p style="font-size:24px;font-weight:700;letter-spacing:4px;color:#2563eb;margin:16px 0;">${newOtp}</p>
-          <p>This code is valid for <strong>5 minutes</strong>.</p>
-          <p style="font-size:13px;color:#6b7280;">If you did not request this code, you can safely ignore this email.</p>
-          <p style="margin-top:24px;">Best regards,<br/><strong>SecureUpload Team</strong></p>
-        </div>
-      `
+      subject: "SecureUpload - New OTP",
+      html: `<h1>${newOtp}</h1><p>Valid for 5 minutes.</p>`,
     });
 
     res.json({ message: "OTP resent successfully" });
 
   } catch (err) {
-    console.error("RESEND OTP ERROR:", err);
+    console.error("RESEND OTP ERROR:", err.message);
     res.status(500).json({ message: "Server error" });
   }
 });
