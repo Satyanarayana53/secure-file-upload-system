@@ -12,14 +12,12 @@ const OTP_RESEND_LIMIT = 3;
 const OTP_RESEND_DELAY_MS = 60 * 1000;
 const OTP_LOCK_TIME = 10 * 60 * 1000;
 
-/* ================= BREVO SMTP CONFIG ================= */
+/* ================= GMAIL SMTP CONFIG ================= */
 const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: 587,
-  secure: false,
+  service: "gmail",
   auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_KEY,
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
   },
 });
 
@@ -27,10 +25,10 @@ const transporter = nodemailer.createTransport({
 router.get("/test-email", async (req, res) => {
   try {
     await transporter.sendMail({
-      from: `"SecureUpload" <${process.env.SMTP_USER}>`,
-      to: req.query.to || process.env.SMTP_USER,
+      from: `"SecureUpload" <${process.env.EMAIL_USER}>`,
+      to: req.query.to || process.env.EMAIL_USER,
       subject: "SecureUpload Test Email",
-      text: "This is a test email from Brevo SMTP.",
+      text: "This is a test email from Gmail SMTP.",
     });
 
     console.log("✅ Test email sent");
@@ -70,7 +68,7 @@ router.post("/register", async (req, res) => {
     // Send Email
     try {
       await transporter.sendMail({
-        from: `"SecureUpload" <${process.env.SMTP_USER}>`,
+        from: `"SecureUpload" <${process.env.EMAIL_USER}>`,
         to: email,
         subject: "SecureUpload - Email Verification Code",
         html: `
@@ -177,7 +175,7 @@ router.post("/resend-otp", async (req, res) => {
     );
 
     await transporter.sendMail({
-      from: `"SecureUpload" <${process.env.SMTP_USER}>`,
+      from: `"SecureUpload" <${process.env.EMAIL_USER}>`,
       to: email,
       subject: "SecureUpload - New OTP",
       html: `<h1>${newOtp}</h1><p>Valid for 5 minutes.</p>`,
