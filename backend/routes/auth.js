@@ -1,7 +1,7 @@
 const express = require("express");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
-const nodemailer = require("nodemailer");
+const { Resend } = require("resend");
 const db = require("../config/db");
 
 const router = express.Router();
@@ -12,29 +12,23 @@ const OTP_RESEND_LIMIT = 3;
 const OTP_RESEND_DELAY_MS = 60 * 1000;
 const OTP_LOCK_TIME = 10 * 60 * 1000;
 
-/* ================= GMAIL SMTP CONFIG ================= */
-const transporter = nodemailer.createTransport({
-  service: "gmail",
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-});
+/* ================= RESEND CONFIG ================= */
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 /* ================= TEST EMAIL ROUTE ================= */
 router.get("/test-email", async (req, res) => {
   try {
-    await transporter.sendMail({
-      from: `"SecureUpload" <${process.env.EMAIL_USER}>`,
-      to: req.query.to || process.env.EMAIL_USER,
-      subject: "SecureUpload Test Email",
-      text: "This is a test email from Gmail SMTP.",
+    const data = await resend.emails.send({
+      from: "onboarding@resend.dev",
+      to: "pillabalu1@gmail.com",
+      subject: "SecureUpload Test",
+      html: "<strong>Resend is working 🚀</strong>",
     });
 
-    console.log("✅ Test email sent");
-    res.json({ message: "Test email sent successfully" });
+    console.log(data);
+    res.json({ message: "Email sent successfully" });
   } catch (err) {
-    console.error("❌ TEST EMAIL ERROR:", err.message);
+    console.error("RESEND ERROR:", err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -67,8 +61,8 @@ router.post("/register", async (req, res) => {
 
     // Send Email
     try {
-      await transporter.sendMail({
-        from: `"SecureUpload" <${process.env.EMAIL_USER}>`,
+      await resend.emails.send({
+        from: "onboarding@resend.dev",
         to: email,
         subject: "SecureUpload - Email Verification Code",
         html: `
@@ -174,8 +168,8 @@ router.post("/resend-otp", async (req, res) => {
       [newOtp, now + OTP_EXPIRY_TIME, now, email]
     );
 
-    await transporter.sendMail({
-      from: `"SecureUpload" <${process.env.EMAIL_USER}>`,
+    await resend.emails.send({
+      from: "onboarding@resend.dev",
       to: email,
       subject: "SecureUpload - New OTP",
       html: `<h1>${newOtp}</h1><p>Valid for 5 minutes.</p>`,
