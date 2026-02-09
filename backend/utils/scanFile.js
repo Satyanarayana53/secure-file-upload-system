@@ -17,13 +17,11 @@ const signatures = {
 async function scanFile(filePath) {
   const buffer = fs.readFileSync(filePath);
   const hex = buffer.toString("hex", 0, 8);
-  const text = buffer.toString().toLowerCase();
   const ext = path.extname(filePath).replace(".", "").toLowerCase();
 
+  // Quick signature check for known binary formats
   if (signatures[ext] && signatures[ext].length > 0) {
-    const valid = signatures[ext].some(sig =>
-      hex.startsWith(sig)
-    );
+    const valid = signatures[ext].some(sig => hex.startsWith(sig));
     if (!valid) {
       return {
         isInfected: true,
@@ -32,29 +30,58 @@ async function scanFile(filePath) {
     }
   }
 
-  if (text.includes(EICAR.toLowerCase())) {
-    return {
-      isInfected: true,
-      viruses: ["EICAR-Test-Virus"]
-    };
-  }
-
-  const suspicious = [
-    "<script",
-    "eval(",
-    "powershell",
-    "base64",
-    "cmd.exe",
-    "wget",
-    "curl"
-  ];
-
-  for (let s of suspicious) {
-    if (text.includes(s)) {
+  // Detect EICAR directly in the buffer (safe for binary and text)
+  try {
+    const eicarBuf = Buffer.from(EICAR);
+    if (buffer.indexOf(eicarBuf) !== -1) {
       return {
         isInfected: true,
-        viruses: ["Suspicious embedded script"]
+        viruses: ["EICAR-Test-Virus"]
       };
+    }
+  } catch (err) {
+    // ignore errors converting/ searching buffer
+  }
+
+  // Heuristic: treat file as binary if there are null bytes in the first chunk
+  const head = buffer.slice(0, 4096);
+  const isBinary = head.includes(0);
+
+  // Only perform textual "suspicious token" scans for likely text files
+  const textExtensions = new Set([
+    "txt",
+    "md",
+    "csv",
+    "json",
+    "xml",
+    "html",
+    "htm",
+    "js",
+    "py",
+    "php",
+    "css"
+  ]);
+
+  if (!isBinary && (textExtensions.has(ext) || ext === "")) {
+    const text = head.toString("utf8").toLowerCase();
+
+    const suspicious = [
+      "<script",
+      "eval(",
+      "powershell",
+      "base64",
+      "cmd.exe",
+      "wget",
+      "curl"
+    ];
+
+    for (let s of suspicious) {
+      if (text.includes(s)) {
+        return {
+          isInfected: true,
+          viruses: ["Suspicious embedded script"]
+        };
+      }
     }
   }
 
