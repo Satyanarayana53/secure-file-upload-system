@@ -1,6 +1,5 @@
 const fs = require("fs");
 const path = require("path");
-const { fileTypeFromBuffer } = require("file-type");
 
 const EICAR =
   "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*";
@@ -16,7 +15,8 @@ const signatures = {
 };
 
 async function scanFile(filePath) {
-  const buffer = fs.readFileSync(filePath);
+  const { fileTypeFromBuffer } = await import("file-type");
+  const buffer = await fs.promises.readFile(filePath);
   const hex = buffer.toString("hex", 0, 8);
   const filenameExt = path.extname(filePath).replace('.', '').toLowerCase();
 

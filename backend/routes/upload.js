@@ -1,5 +1,6 @@
 const express = require("express");
 const multer = require("multer");
+const os = require("os");
 const path = require("path");
 const fs = require("fs");
 const db = require("../config/db");
@@ -14,7 +15,7 @@ const allowedExtensions = [
   "txt", "ppt", "pptx"
 ];
 
-const uploadDir = "uploads/files";
+const uploadDir = path.join(os.tmpdir(), "uploads"); // Use system temp dir for Vercel
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
@@ -44,9 +45,18 @@ const upload = multer({
   }
 });
 
-router.post("/", auth, upload.single("file"), async (req, res) => {
+router.post("/", auth, (req, res, next) => {
+  // Wrap upload.single to catch Multer errors (like file size or type)
+  upload.single("file")(req, res, (err) => {
+    if (err) {
+      return res.status(400).json({ message: err.message });
+    }
+    next();
+  });
+}, async (req, res) => {
   try {
     if (!req.file) {
+      console.log("Request Body:", req.body); // Debug: Check if other fields arrived
       return res.status(400).json({ message: "No file uploaded" });
     }
 
