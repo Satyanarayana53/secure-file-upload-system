@@ -5,8 +5,8 @@ const EICAR =
   "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*";
 
 const signatures = {
-  jpg: ["ffd8ff"],
-  jpeg: ["ffd8ff"],
+  jpg: ["ffd8ff", "ffd8ffe0", "ffd8ffe1", "ffd8ffe8"],
+  jpeg: ["ffd8ff", "ffd8ffe0", "ffd8ffe1", "ffd8ffe8"],
   png: ["89504e47"],
   pdf: ["25504446"],
   docx: ["504b0304"],
@@ -41,6 +41,27 @@ async function scanFile(filePath) {
     }
   } catch (err) {
     // ignore errors converting/ searching buffer
+  }
+
+  // Special-case detection for formats where signature is not at offset 0
+  if (ext === "heic" || ext === "heif") {
+    try {
+      // 'ftyp' box typically starts at offset 4
+      const ftyp = buffer.toString("hex", 4, 8);
+      if (ftyp === "66747970") {
+        // likely a HEIF/HEIC container
+      } else {
+        return {
+          isInfected: true,
+          viruses: ["File signature mismatch"]
+        };
+      }
+    } catch (err) {
+      return {
+        isInfected: true,
+        viruses: ["File signature mismatch"]
+      };
+    }
   }
 
   // Heuristic: treat file as binary if there are null bytes in the first chunk
