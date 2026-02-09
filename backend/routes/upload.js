@@ -53,9 +53,11 @@ router.post("/", auth, upload.single("file"), async (req, res) => {
     const filePath = req.file.path;
 
     const scanResult = await scanFile(filePath);
+    console.log("[UPLOAD] file:", req.file.originalname, "stored:", req.file.filename, "scanResult:", scanResult);
 
     if (scanResult.isInfected) {
       fs.unlinkSync(filePath);
+      console.warn("[UPLOAD] blocked upload - threats:", scanResult.viruses);
 
       return res.status(400).json({
         message: "Malicious file detected",
