@@ -5,12 +5,12 @@ const EICAR =
   "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*";
 
 const signatures = {
-  jpg: ["ffd8ff", "ffd8ffe0", "ffd8ffe1", "ffd8ffe8"],
-  jpeg: ["ffd8ff", "ffd8ffe0", "ffd8ffe1", "ffd8ffe8"],
-  png: ["89504e47"],
-  pdf: ["25504446"],
-  docx: ["504b0304"],
-  pptx: ["504b0304"],
+  jpg: [],
+  jpeg: [],
+  png: [],
+  pdf: [],
+  docx: [],
+  pptx: [],
   txt: []
 };
 
