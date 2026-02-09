@@ -79,7 +79,9 @@ function Upload() {
       fetchFiles("my");
 
     } catch (err) {
-      alert("⚠️ Malicious or unsafe file detected. Upload blocked.");
+      console.error("Upload error:", err);
+      const serverMsg = err?.response?.data?.message || err.message || "Upload failed";
+      alert(`⚠️ ${serverMsg}`);
       setFile(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
