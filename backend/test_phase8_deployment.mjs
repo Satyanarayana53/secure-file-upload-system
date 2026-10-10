@@ -29,6 +29,7 @@ test("PHASE 8 - CLAMAV RESILIENCE: Offline daemon safely produces SCAN_FAILED an
 test("PHASE 8 - MIGRATION SAFETY: All migration SQL files are forward-only and non-destructive", () => {
   const sqlDir = path.join(process.cwd(), "sql");
   const migrationFiles = [
+    "folders_migration.sql",
     "phase1_security_migration.sql",
     "phase2_audit_migration.sql",
     "phase5_sharing_migration.sql",

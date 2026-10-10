@@ -3,30 +3,34 @@ import nodemailer from "nodemailer";
 /**
  * Creates a Nodemailer transporter instance if credentials exist
  */
+const getEmailConfig = () => {
+  const user = process.env.EMAIL_USER || process.env.SMTP_USER;
+  const pass = process.env.EMAIL_PASS || process.env.SMTP_PASS;
+  const host = process.env.EMAIL_HOST || process.env.SMTP_HOST;
+  const port = Number(process.env.EMAIL_PORT || process.env.SMTP_PORT) || 587;
+  const from = process.env.EMAIL_FROM || process.env.SMTP_FROM || user;
+  return { user, pass, host, port, from };
+};
+
 const getTransporter = () => {
-  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+  const { user, pass, host, port } = getEmailConfig();
+  if (!user || !pass) {
     return null;
   }
 
   // Support custom SMTP host/port if configured, otherwise default to Gmail
-  if (process.env.EMAIL_HOST) {
+  if (host) {
     return nodemailer.createTransport({
-      host: process.env.EMAIL_HOST,
-      port: Number(process.env.EMAIL_PORT) || 587,
-      secure: Number(process.env.EMAIL_PORT) === 465,
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
-      }
+      host,
+      port,
+      secure: port === 465,
+      auth: { user, pass }
     });
   }
 
   return nodemailer.createTransport({
     service: "gmail",
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS
-    }
+    auth: { user, pass }
   });
 };
 
@@ -45,8 +49,9 @@ export const sendVerificationEmail = async ({ toEmail, username, rawToken }) => 
     return { sent: false, reason: "smtp_not_configured" };
   }
 
+  const { from } = getEmailConfig();
   const mailOptions = {
-    from: process.env.EMAIL_USER,
+    from: from || process.env.EMAIL_USER,
     to: toEmail,
     subject: "Secure Upload - Verify Your Email Address",
     html: `
@@ -93,8 +98,9 @@ export const sendPasswordResetEmail = async ({ toEmail, rawToken }) => {
     return { sent: false, reason: "smtp_not_configured" };
   }
 
+  const { from } = getEmailConfig();
   const mailOptions = {
-    from: process.env.EMAIL_USER,
+    from: from || process.env.EMAIL_USER,
     to: toEmail,
     subject: "Secure Upload - Password Reset Request",
     html: `

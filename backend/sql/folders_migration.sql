@@ -1,12 +1,12 @@
--- Folder support for Secure Upload System
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
-create table if not exists folders (
-  id uuid primary key default uuid_generate_v4(),
-  user_id uuid not null references users(id) on delete cascade,
-  name text not null,
-  is_favorite boolean default false,
-  parent_id uuid references folders(id) on delete cascade,
-  created_at timestamp default now()
+CREATE TABLE IF NOT EXISTS folders (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  is_favorite BOOLEAN DEFAULT false,
+  parent_id UUID REFERENCES folders(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 alter table folders

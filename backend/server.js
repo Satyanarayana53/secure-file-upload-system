@@ -8,6 +8,7 @@ import authRoutes from "./routes/authRoutes.js";
 import fileRoutes from "./routes/fileRoutes.js";
 import auditRoutes from "./routes/auditRoutes.js";
 import shareRoutes from "./routes/shareRoutes.js";
+import { clamavScanner } from "./scanning/clamavScanner.js";
 
 dotenv.config();
 
@@ -97,7 +98,7 @@ if (process.env.NODE_ENV !== "test") {
   checkConnection();
 }
 
-// 5. Operational health and monitoring routes
+// 5. Operational health, monitoring, and readiness routes
 app.get(["/", "/health", "/api/health"], async (req, res) => {
   let dbStatus = "unreachable";
   try {
@@ -108,15 +109,62 @@ app.get(["/", "/health", "/api/health"], async (req, res) => {
   }
 
   const clamavConfigured = process.env.CLAMAV_ENABLED === "true";
-  const isHealthy = dbStatus === "operational";
+  let avStatus = "disabled";
+  if (clamavConfigured) {
+    try {
+      const pingResult = await clamavScanner.ping();
+      avStatus = pingResult.available ? "operational" : "unreachable";
+    } catch {
+      avStatus = "unreachable";
+    }
+  }
 
-  res.status(isHealthy ? 200 : (dbStatus === "unreachable" ? 503 : 200)).json({
-    status: isHealthy ? "healthy" : "degraded",
+  const isDbOperational = dbStatus === "operational";
+  const isAvOperational = !clamavConfigured || avStatus === "operational";
+  const isHealthy = isDbOperational && isAvOperational;
+  const isDegraded = isDbOperational && !isAvOperational;
+
+  const httpStatus = !isDbOperational ? 503 : 200;
+
+  res.status(httpStatus).json({
+    status: isHealthy ? "healthy" : (isDegraded ? "degraded" : "unhealthy"),
+    ready: isHealthy,
     uptime: Math.floor(process.uptime()),
     timestamp: new Date().toISOString(),
     services: {
       database: dbStatus,
-      antivirus: clamavConfigured ? "enabled" : "disabled"
+      antivirus: avStatus
+    }
+  });
+});
+
+app.get(["/ready", "/api/ready"], async (req, res) => {
+  let dbStatus = "unreachable";
+  try {
+    const { error } = await supabase.from("users").select("id").limit(1);
+    if (!error) dbStatus = "operational";
+  } catch (e) {
+    dbStatus = "unreachable";
+  }
+
+  const clamavConfigured = process.env.CLAMAV_ENABLED === "true";
+  let avStatus = "disabled";
+  if (clamavConfigured) {
+    try {
+      const pingResult = await clamavScanner.ping();
+      avStatus = pingResult.available ? "operational" : "unreachable";
+    } catch {
+      avStatus = "unreachable";
+    }
+  }
+
+  const isReady = dbStatus === "operational" && (!clamavConfigured || avStatus === "operational");
+
+  res.status(isReady ? 200 : 503).json({
+    ready: isReady,
+    services: {
+      database: dbStatus,
+      antivirus: avStatus
     }
   });
 });
