@@ -1,5 +1,6 @@
-import express from 'express';
+import express from "express";
 import {
+  changePassword,
   forgotPassword,
   getCurrentUser,
   login,
@@ -7,18 +8,25 @@ import {
   resetPassword,
   signup,
   updateProfileImage
-} from '../controllers/authController.js';
-import authMiddleware from '../middleware/authMiddleware.js';
-import rateLimiter from '../middleware/rateLimiter.js';
+} from "../controllers/authController.js";
+import authMiddleware from "../middleware/authMiddleware.js";
+import {
+  changePasswordLimiter,
+  forgotPasswordLimiter,
+  loginLimiter,
+  resetPasswordLimiter,
+  signupLimiter
+} from "../middleware/rateLimiter.js";
 
 const router = express.Router();
 
-router.post('/signup', signup);
-router.post('/login', rateLimiter, login);
-router.get('/me', authMiddleware, getCurrentUser);
-router.put('/profile-image', authMiddleware, updateProfileImage);
-router.delete('/profile-image', authMiddleware, removeProfileImage);
-router.post('/forgot-password', forgotPassword);
-router.post('/reset-password', resetPassword);
+router.post("/signup", signupLimiter, signup);
+router.post("/login", loginLimiter, login);
+router.get("/me", authMiddleware, getCurrentUser);
+router.put("/profile-image", authMiddleware, updateProfileImage);
+router.delete("/profile-image", authMiddleware, removeProfileImage);
+router.post("/forgot-password", forgotPasswordLimiter, forgotPassword);
+router.post("/reset-password", resetPasswordLimiter, resetPassword);
+router.post("/change-password", authMiddleware, changePasswordLimiter, changePassword);
 
 export default router;
