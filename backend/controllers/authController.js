@@ -149,7 +149,7 @@ export const login = async (req, res) => {
   try {
     const { data: user, error: dbError } = await supabase
       .from("users")
-      .select("id, username, email, password_hash, created_at, profile_image, email_verified")
+      .select("id, username, email, password_hash, created_at, profile_image, email_verified, is_active, token_version")
       .or(`email.eq.${cleanIdentifier},username.eq.${identifier.trim()}`)
       .single();
 
@@ -163,6 +163,19 @@ export const login = async (req, res) => {
         req
       });
       return res.status(401).json({ success: false, message: "Invalid credentials" });
+    }
+
+    if (user.is_active === false) {
+      await logAuditEvent({
+        eventType: "AUTH_LOGIN_FAILURE",
+        actorId: user.id,
+        actorLabel: user.email,
+        outcome: "failure",
+        severity: "warning",
+        metadata: { reason: "account_disabled" },
+        req
+      });
+      return res.status(403).json({ success: false, message: "Account is disabled. Please contact support." });
     }
 
     const valid = await bcrypt.compare(password, user.password_hash);
@@ -179,11 +192,44 @@ export const login = async (req, res) => {
       return res.status(401).json({ success: false, message: "Invalid credentials" });
     }
 
+    const sessionId = crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString("hex");
+    const tokenVersion = user.token_version || 1;
+
     const token = jwt.sign(
-      { id: user.id },
+      {
+        id: user.id,
+        sessionId,
+        tokenVersion
+      },
       process.env.JWT_SECRET,
       { expiresIn: rememberMe ? "7d" : "1h" }
     );
+
+    const tokenHash = hashToken(token);
+    const expiresAt = new Date(Date.now() + (rememberMe ? 7 * 24 * 60 * 60 * 1000 : 60 * 60 * 1000)).toISOString();
+
+    try {
+      await supabase.from("user_sessions").insert([{
+        id: sessionId,
+        user_id: user.id,
+        token_hash: tokenHash,
+        ip_address: req.ip || req.headers["x-forwarded-for"] || null,
+        user_agent: req.headers["user-agent"] || null,
+        expires_at: expiresAt,
+        is_revoked: false
+      }]);
+    } catch (sessionErr) {
+      // Graceful offline fallback
+    }
+
+    if (res.cookie) {
+      res.cookie("auth_token", token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        maxAge: rememberMe ? 7 * 24 * 60 * 60 * 1000 : 60 * 60 * 1000
+      });
+    }
 
     await logAuditEvent({
       eventType: "AUTH_LOGIN_SUCCESS",
@@ -192,7 +238,7 @@ export const login = async (req, res) => {
       resourceType: "session",
       outcome: "success",
       severity: "info",
-      metadata: { rememberMe: Boolean(rememberMe) },
+      metadata: { rememberMe: Boolean(rememberMe), sessionId },
       req
     });
 
@@ -215,6 +261,29 @@ export const login = async (req, res) => {
 
 export const logout = async (req, res) => {
   if (req.user?.id) {
+    try {
+      if (req.user.sessionId) {
+        await supabase
+          .from("user_sessions")
+          .update({
+            is_revoked: true,
+            revoked_at: new Date().toISOString()
+          })
+          .eq("id", req.user.sessionId);
+      } else if (req.token) {
+        const tokenHash = hashToken(req.token);
+        await supabase
+          .from("user_sessions")
+          .update({
+            is_revoked: true,
+            revoked_at: new Date().toISOString()
+          })
+          .eq("token_hash", tokenHash);
+      }
+    } catch (sessionErr) {
+      // Graceful offline fallback
+    }
+
     await logAuditEvent({
       eventType: "AUTH_LOGOUT",
       actorId: req.user.id,
@@ -223,6 +292,9 @@ export const logout = async (req, res) => {
       severity: "info",
       req
     });
+  }
+  if (res.clearCookie) {
+    res.clearCookie("auth_token");
   }
   res.json({ success: true, message: "Logged out successfully" });
 };
@@ -479,13 +551,37 @@ export const resetPassword = async (req, res) => {
       return res.status(400).json({ success: false, message: "Reset token already consumed" });
     }
 
+    const { data: userRec } = await supabase
+      .from("users")
+      .select("id, token_version")
+      .eq("id", record.user_id)
+      .single();
+
+    const nextTokenVersion = (userRec?.token_version || 1) + 1;
+
     const { error: userUpdateError } = await supabase
       .from("users")
-      .update({ password_hash: hashedPassword })
+      .update({
+        password_hash: hashedPassword,
+        token_version: nextTokenVersion
+      })
       .eq("id", record.user_id);
 
     if (userUpdateError) {
       return res.status(500).json({ success: false, message: "Failed to update password" });
+    }
+
+    try {
+      await supabase
+        .from("user_sessions")
+        .update({
+          is_revoked: true,
+          revoked_at: new Date().toISOString()
+        })
+        .eq("user_id", record.user_id)
+        .eq("is_revoked", false);
+    } catch (sessionErr) {
+      // Graceful offline fallback
     }
 
     await logAuditEvent({
@@ -526,7 +622,7 @@ export const changePassword = async (req, res) => {
   try {
     const { data: user, error: fetchError } = await supabase
       .from("users")
-      .select("id, password_hash")
+      .select("id, password_hash, token_version")
       .eq("id", req.user.id)
       .single();
 
@@ -548,14 +644,70 @@ export const changePassword = async (req, res) => {
     }
 
     const hashedNew = await bcrypt.hash(newPassword, 12);
+    const nextTokenVersion = (user.token_version || 1) + 1;
 
     const { error: updateError } = await supabase
       .from("users")
-      .update({ password_hash: hashedNew })
+      .update({
+        password_hash: hashedNew,
+        token_version: nextTokenVersion
+      })
       .eq("id", req.user.id);
 
     if (updateError) {
       return res.status(500).json({ success: false, message: "Failed to update password" });
+    }
+
+    // Invalidate all prior sessions for this user
+    try {
+      await supabase
+        .from("user_sessions")
+        .update({
+          is_revoked: true,
+          revoked_at: new Date().toISOString()
+        })
+        .eq("user_id", req.user.id)
+        .eq("is_revoked", false);
+    } catch (sessionErr) {
+      // Graceful offline fallback
+    }
+
+    // Issue a fresh session and token for the current active user
+    const newSessionId = crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString("hex");
+    const newToken = jwt.sign(
+      {
+        id: req.user.id,
+        sessionId: newSessionId,
+        tokenVersion: nextTokenVersion
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: "1h" }
+    );
+
+    const tokenHash = hashToken(newToken);
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+
+    try {
+      await supabase.from("user_sessions").insert([{
+        id: newSessionId,
+        user_id: req.user.id,
+        token_hash: tokenHash,
+        ip_address: req.ip || req.headers["x-forwarded-for"] || null,
+        user_agent: req.headers["user-agent"] || null,
+        expires_at: expiresAt,
+        is_revoked: false
+      }]);
+    } catch (sessionErr) {
+      // Graceful offline fallback
+    }
+
+    if (res.cookie) {
+      res.cookie("auth_token", newToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        maxAge: 60 * 60 * 1000
+      });
     }
 
     await logAuditEvent({
@@ -565,10 +717,15 @@ export const changePassword = async (req, res) => {
       resourceId: req.user.id,
       outcome: "success",
       severity: "info",
+      metadata: { newSessionId },
       req
     });
 
-    res.json({ success: true, message: "Password changed successfully" });
+    res.json({
+      success: true,
+      message: "Password changed successfully",
+      token: newToken
+    });
   } catch (err) {
     res.status(500).json({ success: false, message: "Internal server error" });
   }

@@ -13,7 +13,7 @@ dotenv.config();
 
 const app = express();
 
-// 1. Strict Helmet Configuration with CSP
+// 1. Strict Helmet Configuration with CSP and HSTS
 app.use(
   helmet({
     contentSecurityPolicy: {
@@ -21,31 +21,42 @@ app.use(
         defaultSrc: ["'self'"],
         scriptSrc: ["'self'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
-        imgSrc: ["'self'", "data:", "blob:", "https:"],
-        connectSrc: ["'self'", process.env.SUPABASE_URL || "*"],
-        fontSrc: ["'self'", "https:", "data:"],
+        imgSrc: ["'self'", "data:", "blob:", ...(process.env.SUPABASE_URL ? [process.env.SUPABASE_URL] : [])],
+        connectSrc: ["'self'", ...(process.env.SUPABASE_URL ? [process.env.SUPABASE_URL] : [])],
+        fontSrc: ["'self'", "data:"],
         objectSrc: ["'none'"],
-        upgradeInsecureRequests: [],
+        frameAncestors: ["'none'"],
+        baseUri: ["'self'"],
+        formAction: ["'self'"],
+        upgradeInsecureRequests: process.env.NODE_ENV === "production" ? [] : null,
       },
     },
+    hsts: process.env.NODE_ENV === "production" ? {
+      maxAge: 31536000,
+      includeSubDomains: true,
+      preload: true
+    } : false,
+    referrerPolicy: { policy: "strict-origin-when-cross-origin" },
     crossOriginEmbedderPolicy: false,
-    crossOriginResourcePolicy: { policy: "cross-origin" }
+    crossOriginResourcePolicy: { policy: "same-site" }
   })
 );
 
-// 2. Strict CORS allowlist
-const allowedOrigins = (process.env.ALLOWED_ORIGINS || process.env.FRONTEND_URL || "http://localhost:3000")
+// 2. Strict CORS allowlist (disallows wildcard '*' when credentials: true)
+const rawOrigins = process.env.ALLOWED_ORIGINS || process.env.FRONTEND_URL || "http://localhost:3000";
+const allowedOrigins = rawOrigins
   .split(",")
-  .map((origin) => origin.trim().replace(/\/$/, ""));
+  .map((origin) => origin.trim().replace(/\/$/, ""))
+  .filter((origin) => origin && origin !== "*");
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow server-to-server or curl/Postman requests without origin header in non-strict modes
+      // Allow requests with no origin (like local CLI, curl, or server-to-server)
       if (!origin) return callback(null, true);
 
       const normalizedOrigin = origin.trim().replace(/\/$/, "");
-      if (allowedOrigins.includes(normalizedOrigin) || allowedOrigins.includes("*")) {
+      if (allowedOrigins.includes(normalizedOrigin)) {
         return callback(null, true);
       }
       return callback(new Error(`Origin ${origin} not allowed by CORS policy`));
@@ -58,8 +69,8 @@ app.use(
 );
 
 // 3. Request parsing with strict size limits
-app.use(express.json({ limit: "10mb" }));
-app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+app.use(express.json({ limit: "2mb" }));
+app.use(express.urlencoded({ extended: true, limit: "2mb" }));
 
 // 4. Supabase DB connection health check
 const checkConnection = async () => {
