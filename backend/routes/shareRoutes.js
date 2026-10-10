@@ -7,12 +7,13 @@ import {
   downloadPublicShare
 } from "../controllers/shareController.js";
 import authMiddleware from "../middleware/authMiddleware.js";
+import requireEmailVerified from "../middleware/verifiedMiddleware.js";
 import { shareCreateLimiter, shareAccessLimiter } from "../middleware/rateLimiter.js";
 
 const router = express.Router();
 
-// 1. Authenticated Owner Endpoints
-router.post("/create", authMiddleware, shareCreateLimiter, createShareLink);
+// 1. Authenticated Owner Endpoints (Link creation strictly requires verified email)
+router.post("/create", authMiddleware, requireEmailVerified, shareCreateLimiter, createShareLink);
 router.get("/my-links", authMiddleware, getMyShareLinks);
 router.put("/:id/revoke", authMiddleware, revokeShareLink);
 

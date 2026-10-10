@@ -23,16 +23,41 @@ CREATE INDEX IF NOT EXISTS idx_share_links_owner ON share_links(owner_id, create
 CREATE INDEX IF NOT EXISTS idx_share_links_file ON share_links(file_id);
 CREATE INDEX IF NOT EXISTS idx_share_links_status ON share_links(is_revoked, expires_at);
 
--- 3. Atomic increment access count helper function (prevents race conditions)
+-- 3. Atomic increment access count helper function (race-safe conditional increment)
 CREATE OR REPLACE FUNCTION increment_share_access(share_id UUID)
-RETURNS TABLE (new_count INT) AS $$
+RETURNS TABLE (success BOOLEAN, new_count INT) AS $$
+DECLARE
+  v_updated INT;
 BEGIN
-  RETURN QUERY
   UPDATE share_links
   SET 
     access_count = access_count + 1,
     last_accessed_at = NOW()
   WHERE id = share_id
-  RETURNING access_count;
+    AND is_revoked = false
+    AND (expires_at IS NULL OR expires_at > NOW())
+    AND (max_accesses IS NULL OR access_count < max_accesses);
+
+  GET DIAGNOSTICS v_updated = ROW_COUNT;
+
+  IF v_updated > 0 THEN
+    RETURN QUERY
+    SELECT true, access_count FROM share_links WHERE id = share_id;
+  ELSE
+    RETURN QUERY
+    SELECT false, access_count FROM share_links WHERE id = share_id;
+  END IF;
 END;
 $$ LANGUAGE plpgsql;
+
+-- 4. Compensation helper: decrement access count if storage retrieval fails after reservation
+CREATE OR REPLACE FUNCTION decrement_share_access(share_id UUID)
+RETURNS VOID AS $$
+BEGIN
+  UPDATE share_links
+  SET 
+    access_count = GREATEST(0, access_count - 1)
+  WHERE id = share_id;
+END;
+$$ LANGUAGE plpgsql;
+

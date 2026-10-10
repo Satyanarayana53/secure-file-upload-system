@@ -96,5 +96,30 @@ export const shareAccessLimiter = rateLimit({
   }
 });
 
+// Rate limiter for resend verification email: 3 requests per 15 minutes per IP
+export const resendVerificationLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 3,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many verification email requests. Please wait a few minutes before trying again."
+  }
+});
+
+// Rate limiter for email verification attempts: 10 attempts per 15 minutes per IP
+export const verifyEmailLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many verification attempts. Please try again later."
+  }
+});
+
 // Default export maintains backward compatibility
 export default loginLimiter;
+

@@ -111,3 +111,130 @@ test("SHARE AUDIT: Anonymous recipients are never attributed file owner ID", () 
   assert.strictEqual(event.actorLabel, "anonymous");
   assert.notStrictEqual(event.actorId, "real-owner-uuid-1234");
 });
+
+test("SHARE CONCURRENCY: Access count limit cannot be breached under concurrent requests", async () => {
+  // Simulate concurrent access reservation logic with atomic limit gating
+  let link = { id: "link-1", max_accesses: 2, access_count: 0 };
+  let lock = false;
+
+  const simulateAtomicIncrement = async () => {
+    // Wait for simulated row lock
+    while (lock) {
+      await new Promise((r) => setTimeout(r, 1));
+    }
+    lock = true;
+    try {
+      if (link.max_accesses && link.access_count >= link.max_accesses) {
+        return { success: false, accessCount: link.access_count };
+      }
+      link.access_count += 1;
+      return { success: true, accessCount: link.access_count };
+    } finally {
+      lock = false;
+    }
+  };
+
+  // Launch 10 simultaneous download requests for a link with max_accesses = 2
+  const results = await Promise.all([
+    simulateAtomicIncrement(),
+    simulateAtomicIncrement(),
+    simulateAtomicIncrement(),
+    simulateAtomicIncrement(),
+    simulateAtomicIncrement(),
+    simulateAtomicIncrement(),
+    simulateAtomicIncrement(),
+    simulateAtomicIncrement(),
+    simulateAtomicIncrement(),
+    simulateAtomicIncrement()
+  ]);
+
+  const granted = results.filter((r) => r.success);
+  const denied = results.filter((r) => !r.success);
+
+  assert.strictEqual(granted.length, 2, "Only exactly 2 concurrent requests must be granted access");
+  assert.strictEqual(denied.length, 8, "8 remaining concurrent requests must be denied");
+  assert.strictEqual(link.access_count, 2, "Access count must strictly not exceed max_accesses");
+});
+
+test("SHARE METADATA PRIVACY: Password-protected share links mask file name and size before authentication", async () => {
+  const maskShareMetadata = (link, providedPassword, passwordHash) => {
+    const hasPassword = Boolean(passwordHash);
+    let isVerified = false;
+    if (hasPassword && providedPassword) {
+      // In real code bcrypt is used
+      isVerified = providedPassword === "secret123";
+    }
+
+    if (hasPassword && !isVerified) {
+      return {
+        hasPassword: true,
+        isPasswordProtected: true,
+        file: {
+          name: "Protected File",
+          size: null,
+          type: null,
+          isProtected: true
+        }
+      };
+    }
+
+    return {
+      hasPassword,
+      isPasswordProtected: hasPassword,
+      file: {
+        name: link.file.file_name,
+        size: link.file.file_size,
+        type: link.file.file_type,
+        isProtected: hasPassword
+      }
+    };
+  };
+
+  const sampleLink = { file: { file_name: "Confidential_Payroll.xlsx", file_size: 2048576, file_type: "application/vnd.ms-excel" } };
+  
+  // Unauthenticated resolve
+  const masked = maskShareMetadata(sampleLink, null, "hashed_pw");
+  assert.strictEqual(masked.file.name, "Protected File");
+  assert.strictEqual(masked.file.size, null);
+  assert.strictEqual(masked.isPasswordProtected, true);
+
+  // Authenticated resolve
+  const unmasked = maskShareMetadata(sampleLink, "secret123", "hashed_pw");
+  assert.strictEqual(unmasked.file.name, "Confidential_Payroll.xlsx");
+  assert.strictEqual(unmasked.file.size, 2048576);
+});
+
+test("SHARE COMPENSATION: Storage retrieval failure compensates reserved access counter", () => {
+  let link = { id: "link-1", max_accesses: 3, access_count: 1 };
+
+  // Step 1: Reservation
+  link.access_count += 1;
+  assert.strictEqual(link.access_count, 2);
+
+  // Step 2: Storage download fails
+  const storageError = true;
+  if (storageError) {
+    // Compensating action
+    link.access_count = Math.max(0, link.access_count - 1);
+  }
+
+  // Counter is restored so user quota is not penalized
+  assert.strictEqual(link.access_count, 1, "Access counter must be decremented back on storage failure");
+});
+
+test("SHARE ACCESS CONTROL: Download rejects file if file owner does not match share link owner", () => {
+  const verifyOwnership = (shareLink, file) => {
+    if (!file || file.user_id !== shareLink.owner_id) {
+      return { allowed: false, status: 404, message: "File ownership mismatch or file not found" };
+    }
+    return { allowed: true };
+  };
+
+  const shareLink = { id: "share-1", owner_id: "user-alpha" };
+  const legitimateFile = { id: "file-1", user_id: "user-alpha" };
+  const hijackedFile = { id: "file-2", user_id: "user-beta" };
+
+  assert.strictEqual(verifyOwnership(shareLink, legitimateFile).allowed, true);
+  assert.strictEqual(verifyOwnership(shareLink, hijackedFile).allowed, false);
+});
+

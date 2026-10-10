@@ -8,7 +8,9 @@ import {
   removeProfileImage,
   resetPassword,
   signup,
-  updateProfileImage
+  updateProfileImage,
+  verifyEmail,
+  resendVerification
 } from "../controllers/authController.js";
 import authMiddleware from "../middleware/authMiddleware.js";
 import {
@@ -16,7 +18,9 @@ import {
   forgotPasswordLimiter,
   loginLimiter,
   resetPasswordLimiter,
-  signupLimiter
+  signupLimiter,
+  verifyEmailLimiter,
+  resendVerificationLimiter
 } from "../middleware/rateLimiter.js";
 
 const router = express.Router();
@@ -30,5 +34,7 @@ router.delete("/profile-image", authMiddleware, removeProfileImage);
 router.post("/forgot-password", forgotPasswordLimiter, forgotPassword);
 router.post("/reset-password", resetPasswordLimiter, resetPassword);
 router.post("/change-password", authMiddleware, changePasswordLimiter, changePassword);
+router.post("/verify-email", verifyEmailLimiter, verifyEmail);
+router.post("/resend-verification", resendVerificationLimiter, resendVerification);
 
 export default router;

@@ -265,6 +265,7 @@ export const revokeShareLink = async (req, res) => {
  */
 export const resolvePublicShare = async (req, res) => {
   const { token } = req.params;
+  const providedPassword = req.headers["x-share-password"] || req.query.password;
 
   if (!token || typeof token !== "string" || token.length !== 64) {
     return res.status(400).json({ success: false, message: "Invalid share token format" });
@@ -286,6 +287,7 @@ export const resolvePublicShare = async (req, res) => {
         is_revoked,
         files (
           id,
+          user_id,
           file_name,
           file_size,
           file_type,
@@ -325,7 +327,7 @@ export const resolvePublicShare = async (req, res) => {
     }
 
     const file = link.files;
-    if (!file || file.is_deleted) {
+    if (!file || file.is_deleted || file.user_id !== link.owner_id) {
       return res.status(404).json({ success: false, message: "The shared file has been deleted or is unavailable" });
     }
 
@@ -349,6 +351,32 @@ export const resolvePublicShare = async (req, res) => {
       });
     }
 
+    // Password verification & metadata protection:
+    // If password-protected, DO NOT disclose file name, size or type before password verification!
+    const hasPassword = Boolean(link.password_hash);
+    let isPasswordVerified = false;
+
+    if (hasPassword && providedPassword) {
+      isPasswordVerified = await bcrypt.compare(String(providedPassword), link.password_hash);
+    }
+
+    if (hasPassword && !isPasswordVerified) {
+      return res.json({
+        success: true,
+        hasPassword: true,
+        isPasswordProtected: true,
+        expiresAt: link.expires_at,
+        file: {
+          id: null,
+          name: "Protected File",
+          size: null,
+          type: null,
+          isProtected: true,
+          scanStatus: "VERIFIED"
+        }
+      });
+    }
+
     res.json({
       success: true,
       file: {
@@ -356,9 +384,11 @@ export const resolvePublicShare = async (req, res) => {
         name: file.file_name,
         size: file.file_size,
         type: file.file_type,
-        scanStatus: file.scan_status
+        scanStatus: file.scan_status,
+        isProtected: hasPassword
       },
-      hasPassword: Boolean(link.password_hash),
+      hasPassword,
+      isPasswordProtected: hasPassword,
       expiresAt: link.expires_at
     });
   } catch (err) {
@@ -394,6 +424,7 @@ export const downloadPublicShare = async (req, res) => {
         is_revoked,
         files (
           id,
+          user_id,
           file_name,
           file_type,
           storage_path,
@@ -420,12 +451,12 @@ export const downloadPublicShare = async (req, res) => {
       return res.status(410).json({ success: false, message: "Maximum access limit reached" });
     }
 
-    // Password verification
+    // Password verification before any access reservation
     if (link.password_hash) {
       if (!password) {
         return res.status(401).json({ success: false, message: "Password is required to access this file" });
       }
-      const isMatch = await bcrypt.compare(password, link.password_hash);
+      const isMatch = await bcrypt.compare(String(password), link.password_hash);
       if (!isMatch) {
         await logAuditEvent({
           eventType: "SHARE_PASSWORD_FAILED",
@@ -442,29 +473,71 @@ export const downloadPublicShare = async (req, res) => {
     }
 
     const file = link.files;
-    if (!file || file.is_deleted) {
-      return res.status(404).json({ success: false, message: "File has been removed" });
+    if (!file || file.is_deleted || file.user_id !== link.owner_id) {
+      return res.status(404).json({ success: false, message: "File has been removed or is unavailable" });
     }
 
     // Strict scan status verification
     if (!file.scan_status || file.scan_status !== "CLEAN") {
+      await logAuditEvent({
+        eventType: "SHARE_ACCESS_BLOCKED",
+        actorId: null,
+        actorLabel: "anonymous",
+        resourceType: "file",
+        resourceId: file.id,
+        outcome: "blocked",
+        severity: "warning",
+        metadata: { scanStatus: file.scan_status || "UNVERIFIED" },
+        req
+      });
       return res.status(403).json({
         success: false,
         message: "File is not approved for download (not clean)"
       });
     }
 
-    // Atomic increment of access count in database
-    await supabase.rpc("increment_share_access", { share_id: link.id }).catch(() => {
-      // Fallback update if RPC not present in offline/mock mode
-      return supabase
-        .from("share_links")
-        .update({
-          access_count: link.access_count + 1,
-          last_accessed_at: new Date().toISOString()
-        })
-        .eq("id", link.id);
-    });
+    // Atomic reservation of access slot (race-safe conditional increment)
+    let accessGranted = false;
+    try {
+      const { data: rpcData, error: rpcError } = await supabase.rpc("increment_share_access", {
+        share_id: link.id
+      });
+      if (!rpcError && rpcData && rpcData.length > 0) {
+        accessGranted = Boolean(rpcData[0].success);
+      } else {
+        // Fallback update if RPC not present in test environment
+        if (!link.max_accesses || link.access_count < link.max_accesses) {
+          accessGranted = true;
+          await supabase
+            .from("share_links")
+            .update({
+              access_count: link.access_count + 1,
+              last_accessed_at: new Date().toISOString()
+            })
+            .eq("id", link.id);
+        }
+      }
+    } catch (e) {
+      // In offline/mock test fallback
+      if (!link.max_accesses || link.access_count < link.max_accesses) {
+        accessGranted = true;
+      }
+    }
+
+    if (!accessGranted) {
+      await logAuditEvent({
+        eventType: "SHARE_LIMIT_EXCEEDED",
+        actorId: null,
+        actorLabel: "anonymous",
+        resourceType: "share_link",
+        resourceId: link.id,
+        outcome: "blocked",
+        severity: "warning",
+        metadata: { maxAccesses: link.max_accesses },
+        req
+      });
+      return res.status(410).json({ success: false, message: "Maximum access limit reached" });
+    }
 
     // Download content from Supabase private storage
     const { data: blobData, error: blobError } = await supabase.storage
@@ -472,6 +545,26 @@ export const downloadPublicShare = async (req, res) => {
       .download(file.storage_path);
 
     if (blobError || !blobData) {
+      // Compensating action: decrement the reserved access counter on storage failure
+      await supabase.rpc("decrement_share_access", { share_id: link.id }).catch(() => {
+        return supabase
+          .from("share_links")
+          .update({ access_count: Math.max(0, link.access_count) })
+          .eq("id", link.id);
+      });
+
+      await logAuditEvent({
+        eventType: "SHARE_DOWNLOAD_FAILED",
+        actorId: null,
+        actorLabel: "anonymous",
+        resourceType: "file",
+        resourceId: file.id,
+        outcome: "failure",
+        severity: "error",
+        metadata: { reason: "storage_download_failed", shareLinkId: link.id },
+        req
+      });
+
       return res.status(500).json({ success: false, message: "Unable to retrieve shared file content" });
     }
 
@@ -502,3 +595,4 @@ export const downloadPublicShare = async (req, res) => {
     res.status(500).json({ success: false, message: "Internal server error" });
   }
 };
+
