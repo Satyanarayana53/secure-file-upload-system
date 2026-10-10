@@ -1,0 +1,22 @@
+services:
+  # ClamAV Antivirus Daemon
+  # Runs standard ClamAV clamd service on port 3310
+  clamav:
+    image: clamav/clamav:stable
+    container_name: secure_upload_clamav
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3310:3310" # Bound strictly to localhost; never expose publicly
+    environment:
+      - CLAMAV_NO_FRESHCLAMD=false
+    volumes:
+      - clamav_signatures:/var/lib/clamav
+    deploy:
+      resources:
+        limits:
+          memory: 2048M
+          cpus: "1.5"
+
+volumes:
+  clamav_signatures:
+    driver: local

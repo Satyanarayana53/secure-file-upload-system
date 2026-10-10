@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from "uuid";
 import supabase from "../config/supabase.js";
 import { scanFileThreats } from "../utils/fileScanner.js";
 import { logAuditEvent } from "../utils/auditLogger.js";
+import { runScanPipeline, SCAN_STATES } from "../scanning/scanOrchestrator.js";
 
 // Helper: Sanitize folder name
 const sanitizeFolderName = (name = "") => {
@@ -95,9 +96,8 @@ export const uploadFile = async (req, res) => {
     return res.status(400).json({ success: false, message: "Failed to store file" });
   }
 
-  // Determine initial status:
-  // Note: During this Phase 2/3 stage before background scanning daemon,
-  // files that passed preliminary pre-upload validation are assigned initial status
+  // File is initially stored in quarantine pending scan:
+  // Strictly NEVER marked CLEAN without running the complete scanning engine!
   const fileRecord = {
     user_id: req.user.id,
     file_name: displayFileName,
@@ -107,7 +107,7 @@ export const uploadFile = async (req, res) => {
     file_type: file.mimetype || "application/octet-stream",
     folder_id: targetFolderId,
     sha256_hash: sha256Hash,
-    scan_status: "CLEAN",
+    scan_status: SCAN_STATES.QUARANTINED_PENDING_SCAN,
     is_favorite: false,
     is_deleted: false
   };
@@ -143,12 +143,36 @@ export const uploadFile = async (req, res) => {
     metadata: {
       fileSize: file.size,
       mimeType: file.mimetype,
-      sha256: sha256Hash
+      sha256: sha256Hash,
+      status: SCAN_STATES.QUARANTINED_PENDING_SCAN
     },
     req
   });
 
-  res.status(201).json({ success: true, message: "File uploaded securely", file: data });
+  // Execute full scanning pipeline on the uploaded buffer
+  const scanResultDetail = await runScanPipeline({
+    fileId: data?.id,
+    fileBuffer: file.buffer,
+    fileName: displayFileName,
+    userId: req.user.id,
+    req
+  });
+
+  const responseFile = {
+    ...data,
+    scan_status: scanResultDetail.status
+  };
+
+  if (!scanResultDetail.isClean) {
+    return res.status(201).json({
+      success: true,
+      message: `File uploaded to quarantine (${scanResultDetail.status}): ${scanResultDetail.reason || "Under security review"}`,
+      file: responseFile,
+      quarantined: true
+    });
+  }
+
+  res.status(201).json({ success: true, message: "File uploaded and verified clean", file: responseFile });
 };
 
 export const getFiles = async (req, res) => {
@@ -585,8 +609,12 @@ export const getFilePreviewUrl = async (req, res) => {
     return res.status(403).json({ success: false, message: "Cannot preview deleted file. Restore it first." });
   }
 
-  if (file.scan_status && file.scan_status !== "CLEAN") {
-    return res.status(403).json({ success: false, message: `File is quarantined or scanning (${file.scan_status}). Preview not permitted.` });
+  // Security policy: Missing scan status or non-CLEAN status strictly blocks preview
+  if (!file.scan_status || file.scan_status !== "CLEAN") {
+    return res.status(403).json({
+      success: false,
+      message: `File is not approved for access (status: ${file.scan_status || "UNVERIFIED"}). Preview blocked.`
+    });
   }
 
   const { data: signedData, error: signedError } = await supabase.storage
@@ -644,8 +672,12 @@ export const getFileContent = async (req, res) => {
     return res.status(403).json({ success: false, message: "Cannot download a deleted file. Restore it first." });
   }
 
-  if (file.scan_status && file.scan_status !== "CLEAN") {
-    return res.status(403).json({ success: false, message: `File is quarantined or scanning (${file.scan_status}). Access blocked.` });
+  // Security policy: Missing scan status or non-CLEAN status strictly blocks download
+  if (!file.scan_status || file.scan_status !== "CLEAN") {
+    return res.status(403).json({
+      success: false,
+      message: `File is not approved for access (status: ${file.scan_status || "UNVERIFIED"}). Download blocked.`
+    });
   }
 
   const { data: blobData, error: blobError } = await supabase.storage
