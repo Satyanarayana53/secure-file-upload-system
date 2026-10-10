@@ -4,6 +4,7 @@ import {
   forgotPassword,
   getCurrentUser,
   login,
+  logout,
   removeProfileImage,
   resetPassword,
   signup,
@@ -22,6 +23,7 @@ const router = express.Router();
 
 router.post("/signup", signupLimiter, signup);
 router.post("/login", loginLimiter, login);
+router.post("/logout", authMiddleware, logout);
 router.get("/me", authMiddleware, getCurrentUser);
 router.put("/profile-image", authMiddleware, updateProfileImage);
 router.delete("/profile-image", authMiddleware, removeProfileImage);

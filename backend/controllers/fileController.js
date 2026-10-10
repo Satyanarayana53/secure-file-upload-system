@@ -3,6 +3,7 @@ import path from "path";
 import { v4 as uuidv4 } from "uuid";
 import supabase from "../config/supabase.js";
 import { scanFileThreats } from "../utils/fileScanner.js";
+import { logAuditEvent } from "../utils/auditLogger.js";
 
 // Helper: Sanitize folder name
 const sanitizeFolderName = (name = "") => {
@@ -18,9 +19,7 @@ const normalizeFolderId = (folderId) => {
 
 // Helper: Sanitize user display filename
 const sanitizeDisplayFilename = (originalName = "") => {
-  // Strip null bytes and directory traversal sequences
   const basename = path.basename(originalName).replace(/\0/g, "").trim();
-  // Safe character set for display name
   const sanitized = basename.replace(/[\\/:*?"<>|]/g, "_").slice(0, 255);
   return sanitized || "unnamed_file";
 };
@@ -28,7 +27,6 @@ const sanitizeDisplayFilename = (originalName = "") => {
 // Helper: Generate safe server-side storage filename
 const generateSafeStorageName = (file) => {
   const safeRandomId = crypto.randomBytes(16).toString("hex");
-  // Extract strictly sanitized lowercase extension
   const rawExt = path.extname(file.originalname || "").toLowerCase();
   const cleanExt = rawExt.replace(/[^a-z0-9.]/g, "").slice(0, 10);
   return `${safeRandomId}${cleanExt}`;
@@ -36,10 +34,23 @@ const generateSafeStorageName = (file) => {
 
 export const uploadFile = async (req, res) => {
   const file = req.file;
-  if (!file) return res.status(400).json({ success: false, message: "No file uploaded" });
+  if (!file) {
+    return res.status(400).json({ success: false, message: "No file uploaded" });
+  }
 
+  // Pre-upload security scan
   const scanResult = scanFileThreats(file);
   if (!scanResult.isSafe) {
+    await logAuditEvent({
+      eventType: "FILE_UPLOAD_BLOCKED",
+      actorId: req.user.id,
+      resourceType: "file",
+      resourceName: sanitizeDisplayFilename(file.originalname),
+      outcome: "blocked",
+      severity: "warning",
+      metadata: { reason: scanResult.reason },
+      req
+    });
     return res.status(400).json({ success: false, message: `Unsafe file detected: ${scanResult.reason}` });
   }
 
@@ -57,17 +68,12 @@ export const uploadFile = async (req, res) => {
     }
   }
 
-  // 1. Generate safe, unguessable storage filename (never use original filename as storage path)
   const safeStorageName = generateSafeStorageName(file);
   const storagePath = `${req.user.id}/${safeStorageName}`;
-
-  // 2. Sanitize original filename for display metadata only
   const displayFileName = sanitizeDisplayFilename(file.originalname);
-
-  // 3. Calculate SHA-256 integrity hash
   const sha256Hash = crypto.createHash("sha256").update(file.buffer).digest("hex");
 
-  // 4. Upload to storage
+  // Upload to storage
   const { error: storageError } = await supabase.storage
     .from("user-files")
     .upload(storagePath, file.buffer, {
@@ -76,10 +82,22 @@ export const uploadFile = async (req, res) => {
     });
 
   if (storageError) {
+    await logAuditEvent({
+      eventType: "FILE_UPLOAD_FAILED",
+      actorId: req.user.id,
+      resourceType: "file",
+      resourceName: displayFileName,
+      outcome: "failure",
+      severity: "error",
+      metadata: { stage: "storage_upload" },
+      req
+    });
     return res.status(400).json({ success: false, message: "Failed to store file" });
   }
 
-  // 5. Insert record into database with safety fields
+  // Determine initial status:
+  // Note: During this Phase 2/3 stage before background scanning daemon,
+  // files that passed preliminary pre-upload validation are assigned initial status
   const fileRecord = {
     user_id: req.user.id,
     file_name: displayFileName,
@@ -97,10 +115,38 @@ export const uploadFile = async (req, res) => {
   const { data, error: dbError } = await supabase.from("files").insert([fileRecord]).select("*").single();
 
   if (dbError) {
-    // Compensating action: Clean up orphaned storage object
+    // Compensating action: remove orphaned storage object
     await supabase.storage.from("user-files").remove([storagePath]);
+
+    await logAuditEvent({
+      eventType: "FILE_UPLOAD_FAILED",
+      actorId: req.user.id,
+      resourceType: "file",
+      resourceName: displayFileName,
+      outcome: "failure",
+      severity: "error",
+      metadata: { stage: "database_registration" },
+      req
+    });
+
     return res.status(400).json({ success: false, message: "Failed to register file in database" });
   }
+
+  await logAuditEvent({
+    eventType: "FILE_UPLOAD_SUCCESS",
+    actorId: req.user.id,
+    resourceType: "file",
+    resourceId: data?.id,
+    resourceName: displayFileName,
+    outcome: "success",
+    severity: "info",
+    metadata: {
+      fileSize: file.size,
+      mimeType: file.mimetype,
+      sha256: sha256Hash
+    },
+    req
+  });
 
   res.status(201).json({ success: true, message: "File uploaded securely", file: data });
 };
@@ -207,6 +253,18 @@ export const createFolder = async (req, res) => {
     .single();
 
   if (error) return res.status(400).json({ success: false, message: error.message });
+
+  await logAuditEvent({
+    eventType: "FOLDER_CREATED",
+    actorId: req.user.id,
+    resourceType: "folder",
+    resourceId: data.id,
+    resourceName: folderName,
+    outcome: "success",
+    severity: "info",
+    req
+  });
+
   res.status(201).json(data);
 };
 
@@ -225,6 +283,18 @@ export const renameFolder = async (req, res) => {
     .eq("user_id", req.user.id);
 
   if (error) return res.status(400).json({ success: false, message: error.message });
+
+  await logAuditEvent({
+    eventType: "FOLDER_RENAMED",
+    actorId: req.user.id,
+    resourceType: "folder",
+    resourceId: id,
+    resourceName: folderName,
+    outcome: "success",
+    severity: "info",
+    req
+  });
+
   res.json({ success: true, message: "Folder renamed" });
 };
 
@@ -277,6 +347,17 @@ export const deleteFolder = async (req, res) => {
     .eq("user_id", req.user.id);
 
   if (error) return res.status(400).json({ success: false, message: error.message });
+
+  await logAuditEvent({
+    eventType: "FOLDER_DELETED",
+    actorId: req.user.id,
+    resourceType: "folder",
+    resourceId: id,
+    outcome: "success",
+    severity: "warning",
+    req
+  });
+
   res.json({ success: true, message: "Folder deleted" });
 };
 
@@ -305,6 +386,18 @@ export const moveFileToFolder = async (req, res) => {
     .eq("is_deleted", false);
 
   if (error) return res.status(400).json({ success: false, message: error.message });
+
+  await logAuditEvent({
+    eventType: "FILE_MOVED",
+    actorId: req.user.id,
+    resourceType: "file",
+    resourceId: id,
+    outcome: "success",
+    severity: "info",
+    metadata: { targetFolderId: folderId },
+    req
+  });
+
   res.json({ success: true, message: "File moved successfully" });
 };
 
@@ -325,6 +418,18 @@ export const renameFile = async (req, res) => {
     .eq("user_id", req.user.id);
 
   if (error) return res.status(400).json({ success: false, message: error.message });
+
+  await logAuditEvent({
+    eventType: "FILE_RENAMED",
+    actorId: req.user.id,
+    resourceType: "file",
+    resourceId: id,
+    resourceName: sanitized,
+    outcome: "success",
+    severity: "info",
+    req
+  });
+
   res.json({ success: true, message: "File renamed" });
 };
 
@@ -345,6 +450,13 @@ export const toggleFavorite = async (req, res) => {
 export const softDeleteFile = async (req, res) => {
   const { id } = req.params;
 
+  const { data: file } = await supabase
+    .from("files")
+    .select("file_name")
+    .eq("id", id)
+    .eq("user_id", req.user.id)
+    .single();
+
   const { error } = await supabase
     .from("files")
     .update({ is_deleted: true, deleted_at: new Date().toISOString() })
@@ -352,11 +464,30 @@ export const softDeleteFile = async (req, res) => {
     .eq("user_id", req.user.id);
 
   if (error) return res.status(400).json({ success: false, message: error.message });
+
+  await logAuditEvent({
+    eventType: "FILE_MOVED_TO_TRASH",
+    actorId: req.user.id,
+    resourceType: "file",
+    resourceId: id,
+    resourceName: file?.file_name || "file",
+    outcome: "success",
+    severity: "warning",
+    req
+  });
+
   res.json({ success: true, message: "File moved to trash" });
 };
 
 export const restoreFile = async (req, res) => {
   const { id } = req.params;
+
+  const { data: file } = await supabase
+    .from("files")
+    .select("file_name")
+    .eq("id", id)
+    .eq("user_id", req.user.id)
+    .single();
 
   const { error } = await supabase
     .from("files")
@@ -365,21 +496,34 @@ export const restoreFile = async (req, res) => {
     .eq("user_id", req.user.id);
 
   if (error) return res.status(400).json({ success: false, message: error.message });
+
+  await logAuditEvent({
+    eventType: "FILE_RESTORED",
+    actorId: req.user.id,
+    resourceType: "file",
+    resourceId: id,
+    resourceName: file?.file_name || "file",
+    outcome: "success",
+    severity: "info",
+    req
+  });
+
   res.json({ success: true, message: "File restored" });
 };
 
 export const permanentDeleteFile = async (req, res) => {
   const { id } = req.params;
 
-  // Retrieve storage path before deletion
   const { data: file, error: fetchError } = await supabase
     .from("files")
-    .select("storage_path")
+    .select("file_name, storage_path")
     .eq("id", id)
     .eq("user_id", req.user.id)
     .single();
 
-  if (fetchError || !file) return res.status(404).json({ success: false, message: "File not found" });
+  if (fetchError || !file) {
+    return res.status(404).json({ success: false, message: "File not found" });
+  }
 
   // Delete from storage
   const { error: storageError } = await supabase.storage
@@ -399,6 +543,17 @@ export const permanentDeleteFile = async (req, res) => {
 
   if (dbError) return res.status(400).json({ success: false, message: dbError.message });
 
+  await logAuditEvent({
+    eventType: "FILE_PERMANENTLY_DELETED",
+    actorId: req.user.id,
+    resourceType: "file",
+    resourceId: id,
+    resourceName: file.file_name,
+    outcome: "success",
+    severity: "critical",
+    req
+  });
+
   res.json({ success: true, message: "File permanently deleted" });
 };
 
@@ -413,20 +568,27 @@ export const getFilePreviewUrl = async (req, res) => {
     .single();
 
   if (error || !file) {
+    await logAuditEvent({
+      eventType: "FILE_PREVIEW_ATTEMPT",
+      actorId: req.user.id,
+      resourceType: "file",
+      resourceId: id,
+      outcome: "blocked",
+      severity: "warning",
+      metadata: { reason: "file_not_found_or_unauthorized" },
+      req
+    });
     return res.status(404).json({ success: false, message: "File not found" });
   }
 
-  // Security policy: Block deleted files from preview
   if (file.is_deleted) {
     return res.status(403).json({ success: false, message: "Cannot preview deleted file. Restore it first." });
   }
 
-  // Security policy: Block non-clean files from preview
   if (file.scan_status && file.scan_status !== "CLEAN") {
     return res.status(403).json({ success: false, message: `File is quarantined or scanning (${file.scan_status}). Preview not permitted.` });
   }
 
-  // Generate short-lived signed URL (max 5 minutes)
   const { data: signedData, error: signedError } = await supabase.storage
     .from("user-files")
     .createSignedUrl(file.storage_path, 60 * 5);
@@ -434,6 +596,17 @@ export const getFilePreviewUrl = async (req, res) => {
   if (signedError || !signedData?.signedUrl) {
     return res.status(500).json({ success: false, message: "Unable to generate secure preview URL" });
   }
+
+  await logAuditEvent({
+    eventType: "FILE_PREVIEW_SUCCESS",
+    actorId: req.user.id,
+    resourceType: "file",
+    resourceId: id,
+    resourceName: file.file_name,
+    outcome: "success",
+    severity: "info",
+    req
+  });
 
   res.json({
     success: true,
@@ -454,15 +627,23 @@ export const getFileContent = async (req, res) => {
     .single();
 
   if (error || !file) {
+    await logAuditEvent({
+      eventType: "FILE_DOWNLOAD_ATTEMPT",
+      actorId: req.user.id,
+      resourceType: "file",
+      resourceId: id,
+      outcome: "blocked",
+      severity: "warning",
+      metadata: { reason: "file_not_found_or_unauthorized" },
+      req
+    });
     return res.status(404).json({ success: false, message: "File not found" });
   }
 
-  // Security policy: Block deleted files from download
   if (file.is_deleted) {
     return res.status(403).json({ success: false, message: "Cannot download a deleted file. Restore it first." });
   }
 
-  // Security policy: Block non-clean files from download
   if (file.scan_status && file.scan_status !== "CLEAN") {
     return res.status(403).json({ success: false, message: `File is quarantined or scanning (${file.scan_status}). Access blocked.` });
   }
@@ -475,11 +656,21 @@ export const getFileContent = async (req, res) => {
     return res.status(400).json({ success: false, message: "Unable to retrieve file content" });
   }
 
+  await logAuditEvent({
+    eventType: "FILE_DOWNLOAD_SUCCESS",
+    actorId: req.user.id,
+    resourceType: "file",
+    resourceId: id,
+    resourceName: file.file_name,
+    outcome: "success",
+    severity: "info",
+    req
+  });
+
   const arrayBuffer = await blobData.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
   const safeName = encodeURIComponent(file.file_name || "downloaded_file");
 
-  // Enforce secure download headers
   res.setHeader("Content-Type", file.file_type || "application/octet-stream");
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Content-Security-Policy", "default-src 'none'");

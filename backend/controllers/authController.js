@@ -4,6 +4,7 @@ import Joi from "joi";
 import jwt from "jsonwebtoken";
 import nodemailer from "nodemailer";
 import supabase from "../config/supabase.js";
+import { logAuditEvent } from "../utils/auditLogger.js";
 
 // Password strength pattern: min 8 chars, 1 uppercase, 1 number, 1 special char
 const PASSWORD_REGEX = /^(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]).{8,}$/;
@@ -24,7 +25,17 @@ export const signup = async (req, res) => {
   });
 
   const { error } = schema.validate(req.body);
-  if (error) return res.status(400).json({ success: false, message: error.details[0].message });
+  if (error) {
+    await logAuditEvent({
+      eventType: "AUTH_SIGNUP_FAILURE",
+      actorLabel: req.body?.email || "anonymous",
+      outcome: "failure",
+      severity: "warning",
+      metadata: { reason: "validation_error" },
+      req
+    });
+    return res.status(400).json({ success: false, message: error.details[0].message });
+  }
 
   const { username, email, password } = req.body;
   const normalizedEmail = email.trim().toLowerCase();
@@ -33,16 +44,39 @@ export const signup = async (req, res) => {
   try {
     const hashedPassword = await bcrypt.hash(password, 12);
 
-    const { error: dbError } = await supabase
+    const { data: newUser, error: dbError } = await supabase
       .from("users")
-      .insert([{ username: normalizedUsername, email: normalizedEmail, password_hash: hashedPassword }]);
+      .insert([{ username: normalizedUsername, email: normalizedEmail, password_hash: hashedPassword }])
+      .select("id, username, email")
+      .single();
 
     if (dbError) {
+      await logAuditEvent({
+        eventType: "AUTH_SIGNUP_FAILURE",
+        actorLabel: normalizedEmail,
+        outcome: "failure",
+        severity: "warning",
+        metadata: { reason: dbError.code === "23505" ? "duplicate_credential" : "db_error" },
+        req
+      });
+
       if (dbError.code === "23505") {
         return res.status(400).json({ success: false, message: "Username or email already exists" });
       }
       return res.status(400).json({ success: false, message: "Registration failed. Please try again." });
     }
+
+    await logAuditEvent({
+      eventType: "AUTH_SIGNUP_SUCCESS",
+      actorId: newUser?.id,
+      actorLabel: normalizedEmail,
+      resourceType: "account",
+      resourceId: newUser?.id,
+      outcome: "success",
+      severity: "info",
+      metadata: { username: normalizedUsername },
+      req
+    });
 
     res.status(201).json({ success: true, message: "User created successfully" });
   } catch (err) {
@@ -58,7 +92,17 @@ export const login = async (req, res) => {
   });
 
   const { error } = schema.validate(req.body);
-  if (error) return res.status(400).json({ success: false, message: "Invalid input" });
+  if (error) {
+    await logAuditEvent({
+      eventType: "AUTH_LOGIN_FAILURE",
+      actorLabel: req.body?.identifier || "anonymous",
+      outcome: "failure",
+      severity: "warning",
+      metadata: { reason: "invalid_input" },
+      req
+    });
+    return res.status(400).json({ success: false, message: "Invalid input" });
+  }
 
   const { identifier, password, rememberMe } = req.body;
   const cleanIdentifier = identifier.trim().toLowerCase();
@@ -70,13 +114,29 @@ export const login = async (req, res) => {
       .or(`email.eq.${cleanIdentifier},username.eq.${identifier.trim()}`)
       .single();
 
-    // Constant time compare mitigation & generic response
     if (dbError || !user) {
+      await logAuditEvent({
+        eventType: "AUTH_LOGIN_FAILURE",
+        actorLabel: cleanIdentifier,
+        outcome: "failure",
+        severity: "warning",
+        metadata: { reason: "invalid_credentials" },
+        req
+      });
       return res.status(401).json({ success: false, message: "Invalid credentials" });
     }
 
     const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) {
+      await logAuditEvent({
+        eventType: "AUTH_LOGIN_FAILURE",
+        actorId: user.id,
+        actorLabel: user.email,
+        outcome: "failure",
+        severity: "warning",
+        metadata: { reason: "invalid_credentials" },
+        req
+      });
       return res.status(401).json({ success: false, message: "Invalid credentials" });
     }
 
@@ -85,6 +145,17 @@ export const login = async (req, res) => {
       process.env.JWT_SECRET,
       { expiresIn: rememberMe ? "7d" : "1h" }
     );
+
+    await logAuditEvent({
+      eventType: "AUTH_LOGIN_SUCCESS",
+      actorId: user.id,
+      actorLabel: user.email,
+      resourceType: "session",
+      outcome: "success",
+      severity: "info",
+      metadata: { rememberMe: Boolean(rememberMe) },
+      req
+    });
 
     res.json({
       success: true,
@@ -100,6 +171,20 @@ export const login = async (req, res) => {
   } catch (err) {
     res.status(500).json({ success: false, message: "Internal server error" });
   }
+};
+
+export const logout = async (req, res) => {
+  if (req.user?.id) {
+    await logAuditEvent({
+      eventType: "AUTH_LOGOUT",
+      actorId: req.user.id,
+      actorLabel: req.user.email || `user:${req.user.id}`,
+      outcome: "success",
+      severity: "info",
+      req
+    });
+  }
+  res.json({ success: true, message: "Logged out successfully" });
 };
 
 export const getCurrentUser = async (req, res) => {
@@ -141,6 +226,18 @@ export const updateProfileImage = async (req, res) => {
       .single();
 
     if (error) return res.status(400).json({ success: false, message: error.message });
+
+    await logAuditEvent({
+      eventType: "USER_PROFILE_UPDATE",
+      actorId: req.user.id,
+      resourceType: "account",
+      resourceId: req.user.id,
+      outcome: "success",
+      severity: "info",
+      metadata: { action: "avatar_update" },
+      req
+    });
+
     res.json({ success: true, user });
   } catch (err) {
     res.status(500).json({ success: false, message: "Internal server error" });
@@ -157,6 +254,18 @@ export const removeProfileImage = async (req, res) => {
       .single();
 
     if (error) return res.status(400).json({ success: false, message: error.message });
+
+    await logAuditEvent({
+      eventType: "USER_PROFILE_UPDATE",
+      actorId: req.user.id,
+      resourceType: "account",
+      resourceId: req.user.id,
+      outcome: "success",
+      severity: "info",
+      metadata: { action: "avatar_remove" },
+      req
+    });
+
     res.json({ success: true, user });
   } catch (err) {
     res.status(500).json({ success: false, message: "Internal server error" });
@@ -174,8 +283,6 @@ export const forgotPassword = async (req, res) => {
   }
 
   const normalizedEmail = req.body.email.trim().toLowerCase();
-
-  // Generic response message to prevent email enumeration
   const genericMessage = "If an account exists with that email address, a password reset link has been sent.";
 
   try {
@@ -186,23 +293,27 @@ export const forgotPassword = async (req, res) => {
       .single();
 
     if (!user) {
-      // Do not reveal that email doesn't exist
+      await logAuditEvent({
+        eventType: "AUTH_PASSWORD_RESET_REQUESTED",
+        actorLabel: normalizedEmail,
+        outcome: "success", // Reported as success externally to prevent enumeration
+        severity: "info",
+        metadata: { accountFound: false },
+        req
+      });
       return res.json({ success: true, message: genericMessage });
     }
 
-    // Generate cryptographically random 256-bit token (NOT an auth JWT!)
     const rawResetToken = crypto.randomBytes(32).toString("hex");
     const tokenHash = hashToken(rawResetToken);
-    const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString(); // 15 minutes
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
 
-    // Invalidate any previous unused tokens for this user
     await supabase
       .from("password_reset_tokens")
       .update({ used_at: new Date().toISOString() })
       .eq("user_id", user.id)
       .is("used_at", null);
 
-    // Save token hash
     const { error: insertError } = await supabase
       .from("password_reset_tokens")
       .insert([{
@@ -215,7 +326,18 @@ export const forgotPassword = async (req, res) => {
       return res.json({ success: true, message: genericMessage });
     }
 
-    // Send email only if credentials configured
+    await logAuditEvent({
+      eventType: "AUTH_PASSWORD_RESET_REQUESTED",
+      actorId: user.id,
+      actorLabel: user.email,
+      resourceType: "account",
+      resourceId: user.id,
+      outcome: "success",
+      severity: "info",
+      metadata: { accountFound: true },
+      req
+    });
+
     if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
       const transporter = nodemailer.createTransport({
         service: "gmail",
@@ -246,8 +368,7 @@ export const forgotPassword = async (req, res) => {
       try {
         await transporter.sendMail(mailOptions);
       } catch (mailErr) {
-        // Log mail send failure internally without leaking to client
-        console.error("Password reset email delivery failed");
+        console.error("Password reset email delivery notice");
       }
     }
 
@@ -274,6 +395,13 @@ export const resetPassword = async (req, res) => {
 
   // Never accept JWT tokens as reset tokens
   if (token.split(".").length === 3) {
+    await logAuditEvent({
+      eventType: "AUTH_PASSWORD_RESET_FAILED",
+      outcome: "failure",
+      severity: "warning",
+      metadata: { reason: "jwt_token_rejected" },
+      req
+    });
     return res.status(400).json({ success: false, message: "Invalid or expired reset token" });
   }
 
@@ -287,22 +415,42 @@ export const resetPassword = async (req, res) => {
       .single();
 
     if (fetchError || !record) {
+      await logAuditEvent({
+        eventType: "AUTH_PASSWORD_RESET_FAILED",
+        outcome: "failure",
+        severity: "warning",
+        metadata: { reason: "token_not_found" },
+        req
+      });
       return res.status(400).json({ success: false, message: "Invalid or expired reset token" });
     }
 
-    // Check if already used
     if (record.used_at) {
+      await logAuditEvent({
+        eventType: "AUTH_PASSWORD_RESET_FAILED",
+        actorId: record.user_id,
+        outcome: "failure",
+        severity: "warning",
+        metadata: { reason: "token_already_used" },
+        req
+      });
       return res.status(400).json({ success: false, message: "This reset token has already been used" });
     }
 
-    // Check expiration
     if (new Date() > new Date(record.expires_at)) {
+      await logAuditEvent({
+        eventType: "AUTH_PASSWORD_RESET_FAILED",
+        actorId: record.user_id,
+        outcome: "failure",
+        severity: "warning",
+        metadata: { reason: "token_expired" },
+        req
+      });
       return res.status(400).json({ success: false, message: "Reset token has expired" });
     }
 
     const hashedPassword = await bcrypt.hash(newPassword, 12);
 
-    // Atomically mark token as used
     const { error: markError } = await supabase
       .from("password_reset_tokens")
       .update({ used_at: new Date().toISOString() })
@@ -313,7 +461,6 @@ export const resetPassword = async (req, res) => {
       return res.status(400).json({ success: false, message: "Reset token already consumed" });
     }
 
-    // Update user password
     const { error: userUpdateError } = await supabase
       .from("users")
       .update({ password_hash: hashedPassword })
@@ -322,6 +469,16 @@ export const resetPassword = async (req, res) => {
     if (userUpdateError) {
       return res.status(500).json({ success: false, message: "Failed to update password" });
     }
+
+    await logAuditEvent({
+      eventType: "AUTH_PASSWORD_RESET_SUCCESS",
+      actorId: record.user_id,
+      resourceType: "account",
+      resourceId: record.user_id,
+      outcome: "success",
+      severity: "info",
+      req
+    });
 
     res.json({ success: true, message: "Password updated successfully" });
   } catch (err) {
@@ -361,6 +518,14 @@ export const changePassword = async (req, res) => {
 
     const validCurrent = await bcrypt.compare(currentPassword, user.password_hash);
     if (!validCurrent) {
+      await logAuditEvent({
+        eventType: "AUTH_PASSWORD_CHANGE_FAILED",
+        actorId: req.user.id,
+        outcome: "failure",
+        severity: "warning",
+        metadata: { reason: "invalid_current_password" },
+        req
+      });
       return res.status(401).json({ success: false, message: "Current password is incorrect" });
     }
 
@@ -374,6 +539,16 @@ export const changePassword = async (req, res) => {
     if (updateError) {
       return res.status(500).json({ success: false, message: "Failed to update password" });
     }
+
+    await logAuditEvent({
+      eventType: "AUTH_PASSWORD_CHANGE_SUCCESS",
+      actorId: req.user.id,
+      resourceType: "account",
+      resourceId: req.user.id,
+      outcome: "success",
+      severity: "info",
+      req
+    });
 
     res.json({ success: true, message: "Password changed successfully" });
   } catch (err) {

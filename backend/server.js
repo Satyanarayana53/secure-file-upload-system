@@ -6,6 +6,7 @@ import helmet from "helmet";
 import supabase from "./config/supabase.js";
 import authRoutes from "./routes/authRoutes.js";
 import fileRoutes from "./routes/fileRoutes.js";
+import auditRoutes from "./routes/auditRoutes.js";
 
 dotenv.config();
 
@@ -87,6 +88,7 @@ app.get("/", (req, res) => {
 // 6. API routes
 app.use("/api/auth", authRoutes);
 app.use("/api/files", fileRoutes);
+app.use("/api/audit", auditRoutes);
 
 // 7. Safe 404 handler
 app.use((req, res) => {
