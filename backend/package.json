@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "node --test test_phase1_security.mjs test_phase2_audit.mjs test_phase4_scanner.mjs test_phase5_sharing.mjs test_phase6_verification.mjs test_phase7_hardening.mjs test_phase8_deployment.mjs test_phase9_live_validation.mjs"
+    "test": "node --test test_phase1_security.mjs test_phase2_audit.mjs test_phase4_scanner.mjs test_phase5_sharing.mjs test_phase6_verification.mjs test_phase7_hardening.mjs test_phase8_deployment.mjs test_phase9_live_validation.mjs test_phase10_production_readiness.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",

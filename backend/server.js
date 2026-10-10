@@ -97,9 +97,28 @@ if (process.env.NODE_ENV !== "test") {
   checkConnection();
 }
 
-// 5. Health route
-app.get("/", (req, res) => {
-  res.json({ success: true, message: "Secure File Upload Backend Running" });
+// 5. Operational health and monitoring routes
+app.get(["/", "/health", "/api/health"], async (req, res) => {
+  let dbStatus = "unreachable";
+  try {
+    const { error } = await supabase.from("users").select("id").limit(1);
+    if (!error) dbStatus = "operational";
+  } catch (e) {
+    dbStatus = "unreachable";
+  }
+
+  const clamavConfigured = process.env.CLAMAV_ENABLED === "true";
+  const isHealthy = dbStatus === "operational";
+
+  res.status(isHealthy ? 200 : (dbStatus === "unreachable" ? 503 : 200)).json({
+    status: isHealthy ? "healthy" : "degraded",
+    uptime: Math.floor(process.uptime()),
+    timestamp: new Date().toISOString(),
+    services: {
+      database: dbStatus,
+      antivirus: clamavConfigured ? "enabled" : "disabled"
+    }
+  });
 });
 
 // 6. API routes
