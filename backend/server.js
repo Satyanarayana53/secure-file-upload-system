@@ -13,6 +13,9 @@ dotenv.config();
 
 const app = express();
 
+// Trust reverse proxy for accurate client IP in rate limiters and audit logs
+app.set("trust proxy", process.env.TRUST_PROXY ? (process.env.TRUST_PROXY === "true" ? true : Number(process.env.TRUST_PROXY) || 1) : 1);
+
 // 1. Strict Helmet Configuration with CSP and HSTS
 app.use(
   helmet({
@@ -90,7 +93,9 @@ const checkConnection = async () => {
   }
 };
 
-checkConnection();
+if (process.env.NODE_ENV !== "test") {
+  checkConnection();
+}
 
 // 5. Health route
 app.get("/", (req, res) => {
@@ -136,8 +141,10 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+if (process.env.NODE_ENV !== "test") {
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+  });
+}
 
 export default app;
