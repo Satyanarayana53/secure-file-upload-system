@@ -72,5 +72,29 @@ export const apiLimiter = rateLimit({
   }
 });
 
+// Rate limiter for share link creation: 20 per 15 minutes per IP
+export const shareCreateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many share links created. Please try again later."
+  }
+});
+
+// Rate limiter for public shared link access/resolving: 30 requests per minute per IP
+export const shareAccessLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many requests to shared file. Please slow down."
+  }
+});
+
 // Default export maintains backward compatibility
 export default loginLimiter;
