@@ -19,12 +19,16 @@ CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_toke
 DO $$ 
 BEGIN
   -- Add scan_status with check constraint if not exists
+  -- Default to QUARANTINED_PENDING_SCAN so existing and new unscanned rows fail closed
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns 
     WHERE table_name = 'files' AND column_name = 'scan_status'
   ) THEN
-    ALTER TABLE files ADD COLUMN scan_status TEXT DEFAULT 'CLEAN'
+    ALTER TABLE files ADD COLUMN scan_status TEXT DEFAULT 'QUARANTINED_PENDING_SCAN'
       CHECK (scan_status IN ('PENDING_UPLOAD', 'QUARANTINED_PENDING_SCAN', 'SCANNING', 'CLEAN', 'SUSPICIOUS', 'INFECTED', 'SCAN_FAILED'));
+  ELSE
+    -- If column already exists, ensure default is safe
+    ALTER TABLE files ALTER COLUMN scan_status SET DEFAULT 'QUARANTINED_PENDING_SCAN';
   END IF;
 
   -- Add storage_name (UUID-based server identifier, distinct from user's original file_name)
@@ -50,4 +54,9 @@ BEGIN
   ) THEN
     ALTER TABLE files ADD COLUMN deleted_at TIMESTAMPTZ;
   END IF;
+
+  -- Ensure any existing rows where scan_status is NULL are held in quarantine
+  UPDATE files
+  SET scan_status = 'QUARANTINED_PENDING_SCAN'
+  WHERE scan_status IS NULL;
 END $$;
