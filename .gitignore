@@ -33,3 +33,7 @@ Thumbs.db
 uploads/
 tmp/
 temp/
+
+# Git backup metadata
+.git_backup/
+frontend/.git_backup/
